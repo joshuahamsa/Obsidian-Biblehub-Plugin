@@ -19,7 +19,7 @@ export class Crawler {
     this.fetcher.setRateLimit(recipe.rateLimitMs);
 
     const res: CrawlResult = { created: 0, updated: 0, skipped: 0, errors: [] };
-    const lemmaIndex = await this.buildLemmaIndex(recipe.rootFolder);
+    const { lemmaToMeta, strongToTitle } = await this.buildLemmaIndex(recipe.rootFolder);
     const seen = new Set<string>();
     const q: QueueItem[] = [{ strong: rootStrong, depth: 0 }];
 
@@ -47,8 +47,10 @@ export class Crawler {
         if (entry.lemma) lemmaIndex.set(entry.lemma, entry.strong);
 
         if (recipe.linkGreekHebrew) {
-          entry = await this.applyLemmaLinks(entry, lemmaIndex, recipe);
+          entry = await this.applyLemmaLinks(entry, lemmaToMeta, recipe);
         }
+        // map related_strongs to full titles for clean links
+        entry = this.applyRelatedStrongLinks(entry, strongToTitle);
 
         const up = await this.writer.upsert(entry, recipe, renameOnUpdate);
         if (up.created) res.created++;
@@ -89,10 +91,11 @@ export class Crawler {
     return Array.from(new Set(out));
   }
 
-  private async buildLemmaIndex(rootFolder: string): Promise<Map<string, { strong: string; title: string }>> {
+  private async buildLemmaIndex(rootFolder: string): Promise<{ lemmaToMeta: Map<string, { strong: string; title: string }>, strongToTitle: Map<string, string> }> {
     const folder = rootFolder.replace(/^\/+|\/+$/g, "");
     const files = this.vault.getMarkdownFiles().filter(f => f.path.startsWith(folder + "/"));
     const map = new Map<string, { strong: string; title: string }>();
+    const strongToTitle = new Map<string, string>();
     for (const f of files) {
       const content = await this.vault.read(f);
       const mStrong = content.match(/^strong:\s*(G\d{1,5}|H\d{1,5})\s*$/m);
@@ -102,9 +105,10 @@ export class Crawler {
         const strong = mStrong[1].trim();
         const title = f.basename;
         if (lemma) map.set(lemma, { strong, title });
+        if (strong) strongToTitle.set(strong, title);
       }
     }
-    return map;
+    return { lemmaToMeta: map, strongToTitle };
   }
 
   private async applyLemmaLinks(entry: LexiconEntry, lemmaIndex: Map<string, { strong: string; title: string }>, recipe: Recipe): Promise<LexiconEntry> {
