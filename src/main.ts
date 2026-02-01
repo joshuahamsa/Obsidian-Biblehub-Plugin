@@ -1,99 +1,172 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import { App, Modal, Notice, Plugin } from "obsidian";
+import { DEFAULT_SETTINGS, PluginSettings, SettingsTab } from "./settings";
+import { normalizeStrongId, langFromStrong } from "./normalize";
+import { Fetcher } from "./fetcher";
+import { Writer } from "./writer";
+import { Crawler } from "./crawler";
 
-// Remember to rename these classes and interfaces!
+export default class BibleHubLexiconImporter extends Plugin {
+  settings: PluginSettings;
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+  async onload() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // Migrate older settings to include related_strongs crawling + new options
+    const fe = new Set(this.settings.recipe.followEdges ?? []);
+    fe.add("see_also");
+    fe.add("related_strongs");
+    this.settings.recipe.followEdges = Array.from(fe);
 
-	async onload() {
-		await this.loadSettings();
+    if (!this.settings.recipe.linkTypes || this.settings.recipe.linkTypes.length === 0) {
+      this.settings.recipe.linkTypes = ["strongs", "scripture"];
+    }
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+    if (this.settings.recipe.linkGreekHebrew === undefined) {
+      this.settings.recipe.linkGreekHebrew = true;
+    }
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+    if (!this.settings.recipe.lemmaAliasMode) {
+      this.settings.recipe.lemmaAliasMode = "primary";
+    }
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+    if (!this.settings.recipe.scriptureRootFolder) {
+      this.settings.recipe.scriptureRootFolder = "Scripture";
+    }
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
-		});
+    // Remove short_definition from title pattern if still present
+    if (this.settings.recipe.noteTitlePattern?.includes("{{short_definition}}")) {
+      this.settings.recipe.noteTitlePattern = "{{strong}} — {{lemma}} ({{transliteration}})";
+    }
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+    this.addSettingTab(new SettingsTab(this.app, this));
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
+    const fetcher = new Fetcher(this.settings.recipe.rateLimitMs);
+    const writer = new Writer(this.app.vault);
+    const crawler = new Crawler(this.app.vault, fetcher, writer);
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+    this.addCommand({
+      id: "import-strongs-graph",
+      name: "Import Strong's as graph (BibleHub)",
+      callback: async () => {
+        const seed = await this.getSeedFromSelectionOrPrompt();
+        if (!seed) return;
 
-	}
+        const strong = this.normalizeSeedToStrong(seed);
+        if (!strong) {
+          new Notice("Could not parse Strong's ID. Try G2198, H1623, or a BibleHub Strong's URL.");
+          return;
+        }
 
-	onunload() {
-	}
+        const recipe = this.settings.recipe;
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
-	}
+        new Notice(`Importing ${strong} (depth ${recipe.maxDepth}, max ${recipe.maxNodes} nodes)...`);
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+        const result = await crawler.run(strong, recipe, false);
+
+        const msg = [
+          `Done.`,
+          `Created: ${result.created}`,
+          `Updated: ${result.updated}`,
+          `Skipped: ${result.skipped}`,
+          result.errors.length ? `Errors: ${result.errors.length}` : ""
+        ].filter(Boolean).join(" ");
+
+        new Notice(msg);
+      }
+    });
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
+
+  private async getSeedFromSelectionOrPrompt(): Promise<string | null> {
+    const view = this.app.workspace.getActiveViewOfType<any>(Object as any);
+    // If active view has an editor
+    const editor = (view as any)?.editor;
+    const selection = editor?.getSelection?.()?.trim();
+
+    if (selection) return selection;
+
+    // Otherwise prompt
+    return await new SeedModal(this.app).openAndGetValue();
+  }
+
+  private normalizeSeedToStrong(seed: string): string | null {
+    const s = seed.trim();
+
+    // If URL contains /strongs/greek/2198.htm or /strongs/hebrew/1623.htm
+    const m = s.match(/biblehub\.com\/strongs\/(greek|hebrew)\/(\d+)\.htm/i);
+    if (m) {
+      const prefix = m[1].toLowerCase() === "greek" ? "G" : "H";
+      return prefix + String(parseInt(m[2], 10));
+    }
+
+    // If URL contains /greek/2198.htm or /hebrew/1623.htm
+    const m2 = s.match(/biblehub\.com\/(greek|hebrew)\/(\d+)\.htm/i);
+    if (m2) {
+      const prefix = m2[1].toLowerCase() === "greek" ? "G" : "H";
+      return prefix + String(parseInt(m2[2], 10));
+    }
+
+    // Strong's ID
+    const m3 = normalizeStrongId(s);
+    if (m3) return m3;
+
+    // Bare number? Assume Greek (you could make this a setting)
+    const n = s.match(/\b(\d{1,5})\b/);
+    if (n) return normalizeStrongId(n[1], "greek");
+
+    return null;
+  }
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+class SeedModal extends Modal {
+  private value: string = "";
+  private resolved = false;
+  private resolver?: (v: string | null) => void;
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+  async openAndGetValue(): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.resolver = resolve;
+      this.open();
+    });
+  }
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl("h2", { text: "Import BibleHub Strong's" });
+    contentEl.createEl("p", {
+      text: "Enter a Strong's ID (G2198 / H1623) or a BibleHub Strong's URL."
+    });
+
+    const input = contentEl.createEl("input", { type: "text" });
+    input.style.width = "100%";
+    input.placeholder = "e.g., G2198";
+    input.addEventListener("input", () => (this.value = input.value));
+
+    const buttons = contentEl.createDiv({ cls: "modal-button-container" });
+    const ok = buttons.createEl("button", { text: "Import" });
+    const cancel = buttons.createEl("button", { text: "Cancel" });
+
+    ok.addEventListener("click", () => {
+      this.resolved = true;
+      this.close();
+      this.resolver?.(this.value.trim() || null);
+    });
+
+    cancel.addEventListener("click", () => {
+      this.resolved = true;
+      this.close();
+      this.resolver?.(null);
+    });
+
+    setTimeout(() => input.focus(), 50);
+  }
+
+  onClose() {
+    if (!this.resolved) this.resolver?.(null);
+    this.contentEl.empty();
+  }
 }

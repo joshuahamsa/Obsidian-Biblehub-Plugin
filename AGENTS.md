@@ -1,251 +1,271 @@
-# Obsidian community plugin
+# AGENTS.md - Development Guide for BibleHub Lexicon Importer
 
-## Project overview
+## Project Overview
 
-- Target: Obsidian Community Plugin (TypeScript → bundled JavaScript).
-- Entry point: `main.ts` compiled to `main.js` and loaded by Obsidian.
-- Required release artifacts: `main.js`, `manifest.json`, and optional `styles.css`.
+This is an Obsidian plugin for importing BibleHub Strong's lexicon entries into graph-ready notes. The plugin fetches data from BibleHub, parses lexical information, and creates/update Obsidian notes with proper YAML frontmatter and typed links.
 
-## Environment & tooling
+**Technology Stack:**
+- TypeScript with strict typing
+- Obsidian Plugin API
+- ESBuild for bundling
+- No external dependencies beyond Obsidian
 
-- Node.js: use current LTS (Node 18+ recommended).
-- **Package manager: npm** (required for this sample - `package.json` defines npm scripts and dependencies).
-- **Bundler: esbuild** (required for this sample - `esbuild.config.mjs` and build scripts depend on it). Alternative bundlers like Rollup or webpack are acceptable for other projects if they bundle all external dependencies into `main.js`.
-- Types: `obsidian` type definitions.
-
-**Note**: This sample project has specific technical dependencies on npm and esbuild. If you're creating a plugin from scratch, you can choose different tools, but you'll need to replace the build configuration accordingly.
-
-### Install
+## Build/Lint/Test Commands
 
 ```bash
-npm install
-```
-
-### Dev (watch)
-
-```bash
+# Development build with hot reload
 npm run dev
-```
 
-### Production build
-
-```bash
+# Production build
 npm run build
+
+# TypeScript type checking
+npm run typecheck
+
+# ESLint linting
+npm run lint
+
+# Format code (if Prettier is configured)
+npm run format
+
+# Run tests (if test framework is set up)
+npm test
+
+# Run specific test file (if using Jest)
+npm test -- --testNamePattern="specific-test"
 ```
 
-## Linting
+**Note:** This follows the standard Obsidian plugin template structure. If no test framework is set up, add Jest or Vitest for testing.
 
-- To use eslint install eslint from terminal: `npm install -g eslint`
-- To use eslint to analyze this project use this command: `eslint main.ts`
-- eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder: `eslint ./src/`
+## Code Style Guidelines
 
-## File & folder conventions
+### Imports
 
-- **Organize code into multiple files**: Split functionality across separate modules rather than putting everything in `main.ts`.
-- Source lives in `src/`. Keep `main.ts` small and focused on plugin lifecycle (loading, unloading, registering commands).
-- **Example file structure**:
-  ```
-  src/
-    main.ts           # Plugin entry point, lifecycle management
-    settings.ts       # Settings interface and defaults
-    commands/         # Command implementations
-      command1.ts
-      command2.ts
-    ui/              # UI components, modals, views
-      modal.ts
-      view.ts
-    utils/           # Utility functions, helpers
-      helpers.ts
-      constants.ts
-    types.ts         # TypeScript interfaces and types
-  ```
-- **Do not commit build artifacts**: Never commit `node_modules/`, `main.js`, or other generated files to version control.
-- Keep the plugin small. Avoid large dependencies. Prefer browser-compatible packages.
-- Generated output should be placed at the plugin root or `dist/` depending on your build setup. Release artifacts must end up at the top level of the plugin folder in the vault (`main.js`, `manifest.json`, `styles.css`).
+**Order and grouping:**
+1. Obsidian imports first
+2. Third-party library imports (alphabetical)
+3. Local type imports (use `import type`)
+4. Local module imports (alphabetical)
 
-## Manifest rules (`manifest.json`)
+```typescript
+// ✅ Correct import order
+import { App, Modal, Notice, Plugin } from "obsidian";
+import { requestUrl } from "obsidian";
 
-- Must include (non-exhaustive):  
-  - `id` (plugin ID; for local dev it should match the folder name)  
-  - `name`  
-  - `version` (Semantic Versioning `x.y.z`)  
-  - `minAppVersion`  
-  - `description`  
-  - `isDesktopOnly` (boolean)  
-  - Optional: `author`, `authorUrl`, `fundingUrl` (string or map)
-- Never change `id` after release. Treat it as stable API.
-- Keep `minAppVersion` accurate when using newer APIs.
-- Canonical requirements are coded here: https://github.com/obsidianmd/obsidian-releases/blob/master/.github/workflows/validate-plugin-entry.yml
+import type { Recipe, SectionKey, EdgeType } from "./types";
+import type BibleHubLexiconImporter from "./main";
 
-## Testing
+import { normalizeStrongId, langFromStrong } from "./normalize";
+import { Fetcher } from "./fetcher";
+import { Writer } from "./writer";
+```
 
-- Manual install for testing: copy `main.js`, `manifest.json`, `styles.css` (if any) to:
-  ```
-  <Vault>/.obsidian/plugins/<plugin-id>/
-  ```
-- Reload Obsidian and enable the plugin in **Settings → Community plugins**.
+### Naming Conventions
 
-## Commands & settings
+- **Classes:** PascalCase (`BibleHubLexiconImporter`, `SettingsTab`)
+- **Interfaces/Types:** PascalCase (`LexiconEntry`, `Recipe`)
+- **Functions/Variables:** camelCase (`normalizeStrongId`, `parseStrongsPage`)
+- **Constants:** UPPER_SNAKE_CASE (`DEFAULT_SETTINGS`, `DEFAULT_RECIPE`)
+- **Files:** kebab-case for config, PascalCase for classes (`strongs.ts`, `main.ts`)
 
-- Any user-facing commands should be added via `this.addCommand(...)`.
-- If the plugin has configuration, provide a settings tab and sensible defaults.
-- Persist settings using `this.loadData()` / `this.saveData()`.
-- Use stable command IDs; avoid renaming once released.
+### TypeScript Patterns
 
-## Versioning & releases
+**Use strict typing:**
+```typescript
+// ✅ Explicit typing for interfaces
+export interface LexiconEntry {
+  strong: string;
+  lang: Lang;
+  lemma?: string;  // Optional fields marked with ?
+  blocks: Partial<Record<SectionKey, string>>;
+}
 
-- Bump `version` in `manifest.json` (SemVer) and update `versions.json` to map plugin version → minimum app version.
-- Create a GitHub release whose tag exactly matches `manifest.json`'s `version`. Do not use a leading `v`.
-- Attach `manifest.json`, `main.js`, and `styles.css` (if present) to the release as individual assets.
-- After the initial release, follow the process to add/update your plugin in the community catalog as required.
+// ✅ Function return types
+export function normalizeStrongId(raw: string, langHint?: Lang): string | null {
+  // implementation
+}
 
-## Security, privacy, and compliance
+// ✅ Generic types properly constrained
+function uniq(arr: string[]): string[] {
+  return Array.from(new Set(arr));
+}
+```
 
-Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particular:
+### Error Handling
 
-- Default to local/offline operation. Only make network requests when essential to the feature.
-- No hidden telemetry. If you collect optional analytics or call third-party services, require explicit opt-in and document clearly in `README.md` and in settings.
-- Never execute remote code, fetch and eval scripts, or auto-update plugin code outside of normal releases.
-- Minimize scope: read/write only what's necessary inside the vault. Do not access files outside the vault.
-- Clearly disclose any external services used, data sent, and risks.
-- Respect user privacy. Do not collect vault contents, filenames, or personal information unless absolutely necessary and explicitly consented.
-- Avoid deceptive patterns, ads, or spammy notifications.
-- Register and clean up all DOM, app, and interval listeners using the provided `register*` helpers so the plugin unloads safely.
+**Pattern for async operations:**
+```typescript
+try {
+  const url = strongsUrl(strong);
+  const html = await this.fetcher.get(url, true);
+  const entry: LexiconEntry = parseEntryFromStrongsPage(strong, url, html);
+  // Process entry...
+} catch (e: any) {
+  res.errors.push({ id: strong, error: e?.message ?? String(e) });
+}
+```
 
-## UX & copy guidelines (for UI text, commands, settings)
+**Validation and fallbacks:**
+```typescript
+// ✅ Null checks and fallbacks
+const definition = pickLabel(text, "Definition");
+const short_definition = (definition ?? "")
+  .replace(/[.;:].*$/, "")
+  .trim()
+  .split(/\s+/)
+  .slice(0, 4)
+  .join(" ")
+  .trim() || undefined;
+```
 
-- Prefer sentence case for headings, buttons, and titles.
-- Use clear, action-oriented imperatives in step-by-step copy.
-- Use **bold** to indicate literal UI labels. Prefer "select" for interactions.
-- Use arrow notation for navigation: **Settings → Community plugins**.
-- Keep in-app strings short, consistent, and free of jargon.
+### Async/Await Patterns
 
-## Performance
+- Always use async/await instead of Promise chains
+- Handle rate limiting gracefully
+- Use proper error boundaries
 
-- Keep startup light. Defer heavy work until needed.
-- Avoid long-running tasks during `onload`; use lazy initialization.
-- Batch disk access and avoid excessive vault scans.
-- Debounce/throttle expensive operations in response to file system events.
+```typescript
+// ✅ Rate limiting with async delays
+private async rateLimit() {
+  const now = Date.now();
+  const delta = now - this.lastFetchAt;
+  if (delta < this.rateLimitMs) {
+    await new Promise((r) => setTimeout(r, this.rateLimitMs - delta));
+  }
+  this.lastFetchAt = Date.now();
+}
+```
 
-## Coding conventions
+## Project Structure
 
-- TypeScript with `"strict": true` preferred.
-- **Keep `main.ts` minimal**: Focus only on plugin lifecycle (onload, onunload, addCommand calls). Delegate all feature logic to separate modules.
-- **Split large files**: If any file exceeds ~200-300 lines, consider breaking it into smaller, focused modules.
-- **Use clear module boundaries**: Each file should have a single, well-defined responsibility.
-- Bundle everything into `main.js` (no unbundled runtime deps).
-- Avoid Node/Electron APIs if you want mobile compatibility; set `isDesktopOnly` accordingly.
-- Prefer `async/await` over promise chains; handle errors gracefully.
+```
+obsidian-biblehub-lexicon-importer/
+├── manifest.json          # Plugin metadata
+├── package.json          # Dependencies and scripts
+├── tsconfig.json         # TypeScript configuration
+├── esbuild.config.mjs    # Build configuration
+├── styles.css            # Plugin styles
+└── src/
+    ├── main.ts           # Plugin entry point and command registration
+    ├── settings.ts       # Settings UI and default configuration
+    ├── types.ts          # TypeScript interfaces and type definitions
+    ├── normalize.ts      # Utility functions for Strong's IDs and URLs
+    ├── fetcher.ts        # HTTP client with caching and rate limiting
+    ├── writer.ts         # Note creation and update logic
+    ├── crawler.ts        # BFS crawling implementation
+    └── parser/
+        ├── index.ts      # Parser entry point
+        ├── strongs.ts    # BibleHub Strong's page parsing
+        └── common.ts     # HTML parsing utilities
+```
 
-## Mobile
+## Key Architecture Patterns
 
-- Where feasible, test on iOS and Android.
-- Don't assume desktop-only behavior unless `isDesktopOnly` is `true`.
-- Avoid large in-memory structures; be mindful of memory and storage constraints.
+### Modular Design
+- **Separation of concerns:** Each module handles one responsibility
+- **Dependency injection:** Classes receive dependencies via constructor
+- **Type-safe interfaces:** All data structures have explicit TypeScript types
 
-## Agent do/don't
-
-**Do**
-- Add commands with stable IDs (don't rename once released).
-- Provide defaults and validation in settings.
-- Write idempotent code paths so reload/unload doesn't leak listeners or intervals.
-- Use `this.register*` helpers for everything that needs cleanup.
-
-**Don't**
-- Introduce network calls without an obvious user-facing reason and documentation.
-- Ship features that require cloud services without clear disclosure and explicit opt-in.
-- Store or transmit vault contents unless essential and consented.
-
-## Common tasks
-
-### Organize code across multiple files
-
-**main.ts** (minimal, lifecycle only):
-```ts
-import { Plugin } from "obsidian";
-import { MySettings, DEFAULT_SETTINGS } from "./settings";
-import { registerCommands } from "./commands";
-
-export default class MyPlugin extends Plugin {
-  settings: MySettings;
-
+### Plugin Lifecycle
+```typescript
+export default class BibleHubLexiconImporter extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    registerCommands(this);
+    this.addSettingTab(new SettingsTab(this.app, this));
+    
+    // Register commands and event handlers
+  }
+  
+  async saveSettings() {
+    await this.saveData(this.settings);
   }
 }
 ```
 
-**settings.ts**:
-```ts
-export interface MySettings {
-  enabled: boolean;
-  apiKey: string;
+### Settings Management
+- Use interface for settings structure
+- Provide sensible defaults
+- Auto-save on change
+- Use Obsidian's Setting API for UI
+
+### Data Processing Pipeline
+1. **Input** → Strong's ID or URL validation
+2. **Fetch** → Rate-limited HTTP requests with caching
+3. **Parse** → Extract structured data from HTML
+4. **Write** → Create/update Obsidian notes with YAML frontmatter
+5. **Crawl** → BFS traversal of typed links
+
+## Obsidian API Patterns
+
+### File Operations
+```typescript
+// ✅ Safe file creation with folder handling
+async ensureFolder(recipe: Recipe) {
+  const folder = normalizePath(recipe.rootFolder.replace(/^\/+|\/+$/g, ""));
+  if (!(await this.vault.adapter.exists(folder))) {
+    await this.vault.createFolder(folder);
+  }
 }
 
-export const DEFAULT_SETTINGS: MySettings = {
-  enabled: true,
-  apiKey: "",
-};
-```
-
-**commands/index.ts**:
-```ts
-import { Plugin } from "obsidian";
-import { doSomething } from "./my-command";
-
-export function registerCommands(plugin: Plugin) {
-  plugin.addCommand({
-    id: "do-something",
-    name: "Do something",
-    callback: () => doSomething(plugin),
-  });
-}
-```
-
-### Add a command
-
-```ts
-this.addCommand({
-  id: "your-command-id",
-  name: "Do the thing",
-  callback: () => this.doTheThing(),
-});
-```
-
-### Persist settings
-
-```ts
-interface MySettings { enabled: boolean }
-const DEFAULT_SETTINGS: MySettings = { enabled: true };
-
-async onload() {
-  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  await this.saveData(this.settings);
+// ✅ Proper file upsert pattern
+async upsert(entry: LexiconEntry, recipe: Recipe, renameOnUpdate: boolean): Promise<{ file: TFile; created: boolean }> {
+  const existing = this.vault.getAbstractFileByPath(path);
+  if (existing instanceof TFile) {
+    await this.mergeIntoFile(existing, entry, recipe);
+    return { file: existing, created: false };
+  }
+  
+  const content = this.renderNew(entry, recipe);
+  const file = await this.vault.create(path, content);
+  return { file, created: true };
 }
 ```
 
-### Register listeners safely
-
-```ts
-this.registerEvent(this.app.workspace.on("file-open", f => { /* ... */ }));
-this.registerDomEvent(window, "resize", () => { /* ... */ });
-this.registerInterval(window.setInterval(() => { /* ... */ }, 1000));
+### User Interface
+```typescript
+// ✅ Modal pattern for user input
+class SeedModal extends Modal {
+  async openAndGetValue(): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.resolver = resolve;
+      this.open();
+    });
+  }
+  
+  onOpen() {
+    // Build UI elements
+    // Set up event handlers
+  }
+}
 ```
 
-## Troubleshooting
+## Testing Guidelines
 
-- Plugin doesn't load after build: ensure `main.js` and `manifest.json` are at the top level of the plugin folder under `<Vault>/.obsidian/plugins/<plugin-id>/`. 
-- Build issues: if `main.js` is missing, run `npm run build` or `npm run dev` to compile your TypeScript source code.
-- Commands not appearing: verify `addCommand` runs after `onload` and IDs are unique.
-- Settings not persisting: ensure `loadData`/`saveData` are awaited and you re-render the UI after changes.
-- Mobile-only issues: confirm you're not using desktop-only APIs; check `isDesktopOnly` and adjust.
+When implementing tests:
+- Test parsing functions with sample HTML
+- Test URL normalization with various inputs
+- Test file generation with mock data
+- Mock Obsidian API for unit tests
+- Test rate limiting behavior
 
-## References
+## Performance Considerations
 
-- Obsidian sample plugin: https://github.com/obsidianmd/obsidian-sample-plugin
-- API documentation: https://docs.obsidian.md
-- Developer policies: https://docs.obsidian.md/Developer+policies
-- Plugin guidelines: https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines
-- Style guide: https://help.obsidian.md/style-guide
+- **Rate limiting:** Always respect BibleHub's terms of service
+- **Caching:** Cache HTTP responses to avoid duplicate requests
+- **Batching:** Process multiple entries efficiently
+- **Memory:** Use streams for large files if needed
+
+## Security Notes
+
+- Validate all user inputs
+- Sanitize HTML content before processing
+- Never expose API keys or sensitive data in notes
+- Respect robots.txt and terms of service
+
+## Development Workflow
+
+1. Run `npm run dev` for development
+2. Test in Obsidian with sample data
+3. Run `npm run typecheck` and `npm run lint` before commits
+4. Build with `npm run build` for production
+5. Test thoroughly with edge cases and error conditions
