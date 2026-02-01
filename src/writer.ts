@@ -52,9 +52,10 @@ export class Writer {
     const now = new Date().toISOString().slice(0, 10);
 
     const links_see_also = entry.links.see_also.map((id) => `[[${id}]]`);
-    const links_related = entry.links.related_strongs.map((id) => `[[${id}]]`);
+    const relatedStrongTitles = (entry as any).relatedStrongTitles as Array<{id:string,title:string}> | undefined;
+    const links_related = relatedStrongTitles ? relatedStrongTitles.map((r) => `[[${r.title}|${r.id}]]`) : entry.links.related_strongs.map((id) => `[[${id}]]`);
     const links_topical = entry.links.topical.map((id) => `[[${id}]]`);
-    const links_scripture = entry.links.scripture.map((r) => `[[${r.display}]]`);
+    const links_scripture = entry.links.scripture.map((r) => `[[${scriptureLinkPath(recipe, r)}|${r.display}]]`);
 
     const yaml = [
       "---",
@@ -224,4 +225,11 @@ function linkifyScriptureRefs(text: string, refs: Array<{ display: string }>): s
     out = out.replace(new RegExp(`\\b${escaped}\\b`, "g"), `[[${r.display}]]`);
   }
   return out;
+}
+
+
+function scriptureLinkPath(recipe: Recipe, ref: ScriptureRef): string {
+  const book = ref.slug.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const folder = recipe.scriptureRootFolder.replace(/^\/+|\/+$/g, "");
+  return `${folder}/${book}/${ref.chapter}-${ref.verse}`;
 }
