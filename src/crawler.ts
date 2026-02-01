@@ -89,10 +89,10 @@ export class Crawler {
     return Array.from(new Set(out));
   }
 
-  private async buildLemmaIndex(rootFolder: string): Promise<Map<string, string>> {
+  private async buildLemmaIndex(rootFolder: string): Promise<Map<string, { strong: string; title: string }>> {
     const folder = rootFolder.replace(/^\/+|\/+$/g, "");
     const files = this.vault.getMarkdownFiles().filter(f => f.path.startsWith(folder + "/"));
-    const map = new Map<string, string>();
+    const map = new Map<string, { strong: string; title: string }>();
     for (const f of files) {
       const content = await this.vault.read(f);
       const mStrong = content.match(/^strong:\s*(G\d{1,5}|H\d{1,5})\s*$/m);
@@ -100,32 +100,33 @@ export class Crawler {
       if (mStrong && mLemma) {
         const lemma = mLemma[1].trim();
         const strong = mStrong[1].trim();
-        if (lemma) map.set(lemma, strong);
+        const title = f.basename;
+        if (lemma) map.set(lemma, { strong, title });
       }
     }
     return map;
   }
 
-  private async applyLemmaLinks(entry: LexiconEntry, lemmaIndex: Map<string, string>, recipe: Recipe): Promise<LexiconEntry> {
+  private async applyLemmaLinks(entry: LexiconEntry, lemmaIndex: Map<string, { strong: string; title: string }>, recipe: Recipe): Promise<LexiconEntry> {
     const blocks = { ...entry.blocks };
     const lemmasFound = new Set<string>();
     const tokens = extractGreekHebrewTokens(Object.values(blocks).join("\n"));
     for (const token of tokens) {
-      const strong = lemmaIndex.get(token);
-      if (!strong) continue;
+      const hit = lemmaIndex.get(token);
+      if (!hit) continue;
       lemmasFound.add(token);
-      // linkify token occurrences to [[token]] (alias should resolve)
+      const link = `[[${hit.title}|${token}]]`;
       for (const k of Object.keys(blocks) as Array<keyof typeof blocks>) {
         if (!blocks[k]) continue;
-        blocks[k] = replaceTokenWithLink(blocks[k]!, token, `[[${token}]]`);
+        blocks[k] = replaceTokenWithLink(blocks[k]!, token, link);
       }
     }
 
     // add lemma aliases based on mode
     if (recipe.lemmaAliasMode === "all" && lemmasFound.size > 0) {
       for (const lemma of lemmasFound) {
-        const strong = lemmaIndex.get(lemma);
-        if (strong) await this.ensureAliasForStrong(strong, lemma, recipe);
+        const hit = lemmaIndex.get(lemma);
+        if (hit) await this.ensureAliasForStrong(hit.strong, lemma, recipe);
       }
     } else if (entry.lemma) {
       await this.ensureAliasForStrong(entry.strong, entry.lemma, recipe);
@@ -137,26 +138,7 @@ export class Crawler {
   private async ensureAliasForStrong(strong: string, lemma: string, recipe: Recipe): Promise<void> {
     const existing = this.findExistingByStrongIdFallback(strong, recipe);
     if (!existing) {
-      const title = strong;
-      const folder = recipe.rootFolder.replace(/^\/+|\/+$/g, "");
-      if (!(await this.vault.adapter.exists(folder))) {
-        await this.vault.createFolder(folder);
-      }
-      const path = normalizePath(`${folder}/${title}.md`);
-      const yaml = [
-        "---",
-        `type: lexicon/strongs`,
-        `strong: ${strong}`,
-        `lemma: ${lemma}`,
-        `aliases:`,
-        `  - ${strong}`,
-        `  - ${lemma}`,
-        "---",
-        "",
-        `# ${strong}`,
-        ""
-      ].join("\n");
-      await this.vault.create(path, yaml);
+      // Do not create placeholders; wait for full note creation
       return;
     }
 
