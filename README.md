@@ -1,5 +1,26 @@
 # BibleHub Lexicon Importer (Obsidian Plugin)
 
+## Quick Install (Obsidian)
+
+Obsidian only loads built plugin files. After every update:
+
+```bash
+# in repo
+npm install
+npm run build
+
+# copy built artifacts into your vault
+cp manifest.json main.js styles.css /path/to/vault/.obsidian/plugins/obsidian-biblehub-lexicon-importer/
+```
+
+### Updating after changes
+1) `git pull`
+2) `npm run build`
+3) Copy **manifest.json**, **main.js**, **styles.css** into your vault’s plugin folder
+
+> Tip: for development, you can symlink the plugin folder to the repo and use `npm run dev` if you prefer.
+
+
 Import BibleHub Strong's lexicon entries into graph-ready Obsidian notes with typed links, YAML frontmatter, and optional BFS crawling.
 
 ## Features
