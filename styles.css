@@ -1,8 +1,26 @@
-/*
+/* Basic styles for BibleHub Lexicon Importer plugin */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.modal-button-container {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  justify-content: flex-end;
+}
 
-If your plugin does not need CSS, delete this file.
+.modal-button-container button {
+  padding: 6px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
 
-*/
+.modal-button-container button:hover {
+  background: var(--background-modifier-hover);
+}
+
+.modal-button-container button:first-child {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
