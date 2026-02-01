@@ -1,0 +1,25 @@
+app.js:1 Obsidian Developer Console
+app.js:1 Error: File name cannot contain any of the following characters: \ / :
+    at RC (app.js:1:1127946)
+    at t.checkPath (app.js:1:1135351)
+    at t.<anonymous> (app.js:1:1137236)
+    at app.js:1:250088
+    at Object.next (app.js:1:250193)
+    at app.js:1:249109
+    at new Promise (<anonymous>)
+    at y (app.js:1:248854)
+    at t.create (app.js:1:1137124)
+    at e.<anonymous> (app.js:1:1240113)
+(anonymous) @ app.js:1
+app.js:1 Error: File name cannot contain any of the following characters: \ / :
+    at RC (app.js:1:1127946)
+    at t.checkPath (app.js:1:1135351)
+    at t.<anonymous> (app.js:1:1137236)
+    at app.js:1:250088
+    at Object.next (app.js:1:250193)
+    at app.js:1:249109
+    at new Promise (<anonymous>)
+    at y (app.js:1:248854)
+    at t.create (app.js:1:1137124)
+    at e.<anonymous> (app.js:1:1240113)
+(anonymous) @ app.js:1
