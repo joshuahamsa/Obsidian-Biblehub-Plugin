@@ -1,4 +1,4 @@
-import { TFile, Vault, normalizePath } from "obsidian";
+import { TFile, Vault, normalizePath, Notice } from "obsidian";
 import type { LexiconEntry, Recipe, SectionKey } from "./types";
 import { safeFileName } from "./normalize";
 
@@ -44,6 +44,8 @@ export class Writer {
     }
 
     const content = this.renderNew(entry, recipe);
+    console.log("[BibleHub] Creating lexicon note:", path);
+    new Notice(`[BibleHub] Creating lexicon note: ${path}`);
     const file = await this.vault.create(path, content);
     return { file, created: true };
   }
