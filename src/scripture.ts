@@ -1,4 +1,4 @@
-import { normalizePath, Vault } from "obsidian";
+import { normalizePath, Vault, Notice } from "obsidian";
 import type { ScriptureRef } from "./types";
 import { safeFileName } from "./normalize";
 import { Fetcher } from "./fetcher";
@@ -87,6 +87,8 @@ export async function ensureScriptureNote(
     ""
   ].join("\n");
 
+  console.log("[BibleHub] Creating scripture note:", path);
+  new Notice(`[BibleHub] Creating scripture note: ${path}`);
   await vault.create(path, yaml + body);
 }
 
