@@ -31,7 +31,7 @@ var __toModule = (module2) => {
 __export(exports, {
   default: () => BibleHubLexiconImporter
 });
-var import_obsidian6 = __toModule(require("obsidian"));
+var import_obsidian5 = __toModule(require("obsidian"));
 
 // src/settings.ts
 var import_obsidian = __toModule(require("obsidian"));
@@ -235,6 +235,8 @@ var Writer = class {
       return { file: existing, created: false };
     }
     const content = this.renderNew(entry, recipe);
+    console.log("[BibleHub] Creating lexicon note:", path);
+    new import_obsidian3.Notice(`[BibleHub] Creating lexicon note: ${path}`);
     const file = await this.vault.create(path, content);
     return { file, created: true };
   }
@@ -242,9 +244,10 @@ var Writer = class {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     const now = new Date().toISOString().slice(0, 10);
     const links_see_also = entry.links.see_also.map((id) => `[[${id}]]`);
-    const links_related = entry.links.related_strongs.map((id) => `[[${id}]]`);
+    const relatedStrongTitles = entry.relatedStrongTitles;
+    const links_related = relatedStrongTitles ? relatedStrongTitles.map((r) => `[[${r.title}|${r.id}]]`) : entry.links.related_strongs.map((id) => `[[${id}]]`);
     const links_topical = entry.links.topical.map((id) => `[[${id}]]`);
-    const links_scripture = entry.links.scripture.map((r) => `[[${r.display}]]`);
+    const links_scripture = entry.links.scripture.map((r) => `[[${scriptureLinkPath(recipe, r)}|${r.display}]]`);
     const yaml = [
       "---",
       `type: lexicon/strongs`,
@@ -397,6 +400,11 @@ function linkifyScriptureRefs(text, refs) {
   }
   return out;
 }
+function scriptureLinkPath(recipe, ref) {
+  const book = ref.slug.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const folder = recipe.scriptureRootFolder.replace(/^\/+|\/+$/g, "");
+  return `${folder}/${book}/${ref.chapter}-${ref.verse}`;
+}
 
 // src/parser/common.ts
 function htmlToText(html) {
@@ -483,6 +491,8 @@ async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStron
     text.trim(),
     ""
   ].join("\n");
+  console.log("[BibleHub] Creating scripture note:", path);
+  new import_obsidian4.Notice(`[BibleHub] Creating scripture note: ${path}`);
   await vault.create(path, yaml + body);
 }
 function extractNasbText(html) {
@@ -611,7 +621,6 @@ function parseEntryFromStrongsPage(strong, url, html) {
 }
 
 // src/crawler.ts
-var import_obsidian5 = __toModule(require("obsidian"));
 var Crawler = class {
   constructor(vault, fetcher, writer) {
     this.vault = vault;
@@ -622,7 +631,7 @@ var Crawler = class {
     var _a;
     this.fetcher.setRateLimit(recipe.rateLimitMs);
     const res = { created: 0, updated: 0, skipped: 0, errors: [] };
-    const lemmaIndex = await this.buildLemmaIndex(recipe.rootFolder);
+    const { lemmaToMeta, strongToTitle } = await this.buildLemmaIndex(recipe.rootFolder);
     const seen = new Set();
     const q = [{ strong: rootStrong, depth: 0 }];
     let processed = 0;
@@ -641,11 +650,17 @@ var Crawler = class {
         const url = strongsUrl(strong);
         const html = await this.fetcher.get(url, true);
         let entry = parseEntryFromStrongsPage(strong, url, html);
+        const currentTitle = this.writer.buildTitle(entry, recipe);
         if (entry.lemma)
-          lemmaIndex.set(entry.lemma, entry.strong);
+          lemmaToMeta.set(entry.lemma, {
+            strong: entry.strong,
+            title: currentTitle
+          });
+        strongToTitle.set(entry.strong, currentTitle);
         if (recipe.linkGreekHebrew) {
-          entry = await this.applyLemmaLinks(entry, lemmaIndex, recipe);
+          entry = await this.applyLemmaLinks(entry, lemmaToMeta, recipe);
         }
+        entry = this.applyRelatedStrongLinks(entry, strongToTitle);
         const up = await this.writer.upsert(entry, recipe, renameOnUpdate);
         if (up.created)
           res.created++;
@@ -686,6 +701,7 @@ var Crawler = class {
     const folder = rootFolder.replace(/^\/+|\/+$/g, "");
     const files = this.vault.getMarkdownFiles().filter((f) => f.path.startsWith(folder + "/"));
     const map = new Map();
+    const strongToTitle = new Map();
     for (const f of files) {
       const content = await this.vault.read(f);
       const mStrong = content.match(/^strong:\s*(G\d{1,5}|H\d{1,5})\s*$/m);
@@ -693,61 +709,54 @@ var Crawler = class {
       if (mStrong && mLemma) {
         const lemma = mLemma[1].trim();
         const strong = mStrong[1].trim();
+        const title = f.basename;
         if (lemma)
-          map.set(lemma, strong);
+          map.set(lemma, { strong, title });
+        if (strong)
+          strongToTitle.set(strong, title);
       }
     }
-    return map;
+    return { lemmaToMeta: map, strongToTitle };
   }
   async applyLemmaLinks(entry, lemmaIndex, recipe) {
     const blocks = { ...entry.blocks };
     const lemmasFound = new Set();
     const tokens = extractGreekHebrewTokens(Object.values(blocks).join("\n"));
     for (const token of tokens) {
-      const strong = lemmaIndex.get(token);
-      if (!strong)
+      const hit = lemmaIndex.get(token);
+      if (!hit)
         continue;
       lemmasFound.add(token);
+      const link = `[[${hit.title}|${token}]]`;
       for (const k of Object.keys(blocks)) {
         if (!blocks[k])
           continue;
-        blocks[k] = replaceTokenWithLink(blocks[k], token, `[[${token}]]`);
+        blocks[k] = replaceTokenWithLink(blocks[k], token, link);
       }
     }
     if (recipe.lemmaAliasMode === "all" && lemmasFound.size > 0) {
       for (const lemma of lemmasFound) {
-        const strong = lemmaIndex.get(lemma);
-        if (strong)
-          await this.ensureAliasForStrong(strong, lemma, recipe);
+        const hit = lemmaIndex.get(lemma);
+        if (hit)
+          await this.ensureAliasForStrong(hit.strong, lemma, recipe);
       }
     } else if (entry.lemma) {
       await this.ensureAliasForStrong(entry.strong, entry.lemma, recipe);
     }
     return { ...entry, blocks };
   }
+  applyRelatedStrongLinks(entry, strongToTitle) {
+    const relatedStrongTitles = entry.links.related_strongs.map((id) => {
+      const title = strongToTitle.get(id);
+      return title ? { id, title } : null;
+    }).filter((v) => v !== null);
+    if (!relatedStrongTitles.length)
+      return entry;
+    return { ...entry, relatedStrongTitles };
+  }
   async ensureAliasForStrong(strong, lemma, recipe) {
     const existing = this.findExistingByStrongIdFallback(strong, recipe);
     if (!existing) {
-      const title = strong;
-      const folder = recipe.rootFolder.replace(/^\/+|\/+$/g, "");
-      if (!await this.vault.adapter.exists(folder)) {
-        await this.vault.createFolder(folder);
-      }
-      const path = (0, import_obsidian5.normalizePath)(`${folder}/${title}.md`);
-      const yaml = [
-        "---",
-        `type: lexicon/strongs`,
-        `strong: ${strong}`,
-        `lemma: ${lemma}`,
-        `aliases:`,
-        `  - ${strong}`,
-        `  - ${lemma}`,
-        "---",
-        "",
-        `# ${strong}`,
-        ""
-      ].join("\n");
-      await this.vault.create(path, yaml);
       return;
     }
     const text = await this.vault.read(existing);
@@ -804,10 +813,11 @@ aliases:
 }
 
 // src/main.ts
-var BibleHubLexiconImporter = class extends import_obsidian6.Plugin {
+var BibleHubLexiconImporter = class extends import_obsidian5.Plugin {
   async onload() {
     var _a, _b;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.sanitizeRecipeSettings();
     const fe = new Set((_a = this.settings.recipe.followEdges) != null ? _a : []);
     fe.add("see_also");
     fe.add("related_strongs");
@@ -827,6 +837,7 @@ var BibleHubLexiconImporter = class extends import_obsidian6.Plugin {
     if ((_b = this.settings.recipe.noteTitlePattern) == null ? void 0 : _b.includes("{{short_definition}}")) {
       this.settings.recipe.noteTitlePattern = "{{strong}} \u2014 {{lemma}} ({{transliteration}})";
     }
+    this.sanitizeRecipeSettings();
     this.addSettingTab(new SettingsTab(this.app, this));
     const fetcher = new Fetcher(this.settings.recipe.rateLimitMs);
     const writer = new Writer(this.app.vault);
@@ -840,11 +851,15 @@ var BibleHubLexiconImporter = class extends import_obsidian6.Plugin {
           return;
         const strong = this.normalizeSeedToStrong(seed);
         if (!strong) {
-          new import_obsidian6.Notice("Could not parse Strong's ID. Try G2198, H1623, or a BibleHub Strong's URL.");
+          new import_obsidian5.Notice("Could not parse Strong's ID. Try G2198, H1623, or a BibleHub Strong's URL.");
           return;
         }
         const recipe = this.settings.recipe;
-        new import_obsidian6.Notice(`Importing ${strong} (depth ${recipe.maxDepth}, max ${recipe.maxNodes} nodes)...`);
+        if (recipe.maxNodes < 1) {
+          recipe.maxNodes = 1;
+          await this.saveSettings();
+        }
+        new import_obsidian5.Notice(`Importing ${strong} (depth ${recipe.maxDepth}, max ${recipe.maxNodes} nodes)...`);
         const result = await crawler.run(strong, recipe, false);
         const msg = [
           `Done.`,
@@ -853,12 +868,22 @@ var BibleHubLexiconImporter = class extends import_obsidian6.Plugin {
           `Skipped: ${result.skipped}`,
           result.errors.length ? `Errors: ${result.errors.length}` : ""
         ].filter(Boolean).join(" ");
-        new import_obsidian6.Notice(msg);
+        new import_obsidian5.Notice(msg);
+        if (result.created === 0 && result.updated === 0 && result.skipped > 0 && recipe.skipExisting) {
+          new import_obsidian5.Notice("Nothing imported because 'Skip existing notes' is ON and matching notes were found. Turn it off in settings to refetch/overwrite.");
+        }
       }
     });
   }
   async saveSettings() {
+    this.sanitizeRecipeSettings();
     await this.saveData(this.settings);
+  }
+  sanitizeRecipeSettings() {
+    const recipe = this.settings.recipe;
+    recipe.maxDepth = Number.isFinite(recipe.maxDepth) ? Math.max(0, Math.floor(recipe.maxDepth)) : 2;
+    recipe.maxNodes = Number.isFinite(recipe.maxNodes) ? Math.max(1, Math.floor(recipe.maxNodes)) : 100;
+    recipe.rateLimitMs = Number.isFinite(recipe.rateLimitMs) ? Math.max(0, Math.floor(recipe.rateLimitMs)) : 1e3;
   }
   async getSeedFromSelectionOrPrompt() {
     var _a, _b;
@@ -890,7 +915,7 @@ var BibleHubLexiconImporter = class extends import_obsidian6.Plugin {
     return null;
   }
 };
-var SeedModal = class extends import_obsidian6.Modal {
+var SeedModal = class extends import_obsidian5.Modal {
   constructor() {
     super(...arguments);
     this.value = "";

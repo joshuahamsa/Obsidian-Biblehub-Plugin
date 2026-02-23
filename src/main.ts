@@ -10,13 +10,17 @@ export default class BibleHubLexiconImporter extends Plugin {
 
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.sanitizeRecipeSettings();
     // Migrate older settings to include related_strongs crawling + new options
     const fe = new Set(this.settings.recipe.followEdges ?? []);
     fe.add("see_also");
     fe.add("related_strongs");
     this.settings.recipe.followEdges = Array.from(fe);
 
-    if (!this.settings.recipe.linkTypes || this.settings.recipe.linkTypes.length === 0) {
+    if (
+      !this.settings.recipe.linkTypes ||
+      this.settings.recipe.linkTypes.length === 0
+    ) {
       this.settings.recipe.linkTypes = ["strongs", "scripture"];
     }
 
@@ -33,9 +37,14 @@ export default class BibleHubLexiconImporter extends Plugin {
     }
 
     // Remove short_definition from title pattern if still present
-    if (this.settings.recipe.noteTitlePattern?.includes("{{short_definition}}")) {
-      this.settings.recipe.noteTitlePattern = "{{strong}} — {{lemma}} ({{transliteration}})";
+    if (
+      this.settings.recipe.noteTitlePattern?.includes("{{short_definition}}")
+    ) {
+      this.settings.recipe.noteTitlePattern =
+        "{{strong}} — {{lemma}} ({{transliteration}})";
     }
+
+    this.sanitizeRecipeSettings();
 
     this.addSettingTab(new SettingsTab(this.app, this));
 
@@ -52,13 +61,22 @@ export default class BibleHubLexiconImporter extends Plugin {
 
         const strong = this.normalizeSeedToStrong(seed);
         if (!strong) {
-          new Notice("Could not parse Strong's ID. Try G2198, H1623, or a BibleHub Strong's URL.");
+          new Notice(
+            "Could not parse Strong's ID. Try G2198, H1623, or a BibleHub Strong's URL."
+          );
           return;
         }
 
         const recipe = this.settings.recipe;
 
-        new Notice(`Importing ${strong} (depth ${recipe.maxDepth}, max ${recipe.maxNodes} nodes)...`);
+        if (recipe.maxNodes < 1) {
+          recipe.maxNodes = 1;
+          await this.saveSettings();
+        }
+
+        new Notice(
+          `Importing ${strong} (depth ${recipe.maxDepth}, max ${recipe.maxNodes} nodes)...`
+        );
 
         const result = await crawler.run(strong, recipe, false);
 
@@ -67,16 +85,43 @@ export default class BibleHubLexiconImporter extends Plugin {
           `Created: ${result.created}`,
           `Updated: ${result.updated}`,
           `Skipped: ${result.skipped}`,
-          result.errors.length ? `Errors: ${result.errors.length}` : ""
-        ].filter(Boolean).join(" ");
+          result.errors.length ? `Errors: ${result.errors.length}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
 
         new Notice(msg);
-      }
+
+        if (
+          result.created === 0 &&
+          result.updated === 0 &&
+          result.skipped > 0 &&
+          recipe.skipExisting
+        ) {
+          new Notice(
+            "Nothing imported because 'Skip existing notes' is ON and matching notes were found. Turn it off in settings to refetch/overwrite."
+          );
+        }
+      },
     });
   }
 
   async saveSettings() {
+    this.sanitizeRecipeSettings();
     await this.saveData(this.settings);
+  }
+
+  private sanitizeRecipeSettings(): void {
+    const recipe = this.settings.recipe;
+    recipe.maxDepth = Number.isFinite(recipe.maxDepth)
+      ? Math.max(0, Math.floor(recipe.maxDepth))
+      : 2;
+    recipe.maxNodes = Number.isFinite(recipe.maxNodes)
+      ? Math.max(1, Math.floor(recipe.maxNodes))
+      : 100;
+    recipe.rateLimitMs = Number.isFinite(recipe.rateLimitMs)
+      ? Math.max(0, Math.floor(recipe.rateLimitMs))
+      : 1000;
   }
 
   private async getSeedFromSelectionOrPrompt(): Promise<string | null> {
@@ -138,7 +183,7 @@ class SeedModal extends Modal {
 
     contentEl.createEl("h2", { text: "Import BibleHub Strong's" });
     contentEl.createEl("p", {
-      text: "Enter a Strong's ID (G2198 / H1623) or a BibleHub Strong's URL."
+      text: "Enter a Strong's ID (G2198 / H1623) or a BibleHub Strong's URL.",
     });
 
     const input = contentEl.createEl("input", { type: "text" });
