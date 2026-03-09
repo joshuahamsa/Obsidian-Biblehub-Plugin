@@ -4,11 +4,17 @@ import { safeFileName } from "./normalize";
 import { Fetcher } from "./fetcher";
 
 export function slugToBookName(slug: string): string {
-  const words = slug.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  const words = slug
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1));
   return words.join(" ");
 }
 
-export function makeScriptureRefFromSlug(slug: string, chapter: number, verse: number): ScriptureRef {
+export function makeScriptureRefFromSlug(
+  slug: string,
+  chapter: number,
+  verse: number
+): ScriptureRef {
   const book = slugToBookName(slug);
   const display = `${book} ${chapter}:${verse}`;
   const interlinearUrl = `https://biblehub.com/interlinear/${slug}/${chapter}-${verse}.htm`;
@@ -16,10 +22,15 @@ export function makeScriptureRefFromSlug(slug: string, chapter: number, verse: n
   return { slug, chapter, verse, display, interlinearUrl, nasbUrl };
 }
 
-export function scriptureNotePath(rootFolder: string, ref: ScriptureRef): string {
+export function scriptureNotePath(
+  rootFolder: string,
+  ref: ScriptureRef
+): string {
   const book = safeFileName(slugToBookName(ref.slug));
   const folder = rootFolder.replace(/^\/+|\/+$/g, "");
-  return normalizePath(`${folder}/${book}/${ref.chapter}-${ref.verse}.md`);
+  return normalizePath(
+    `${folder}/${book}/${book}-${ref.chapter}-${ref.verse}.md`
+  );
 }
 
 export function scriptureAliases(ref: ScriptureRef): string[] {
@@ -27,7 +38,12 @@ export function scriptureAliases(ref: ScriptureRef): string[] {
   const full = `${book} ${ref.chapter}:${ref.verse}`;
   const abbr = bookAbbrev(book);
   const abbrSpaced = abbr ? `${abbr} ${ref.chapter}:${ref.verse}` : "";
-  const abbrCompact = abbr ? `${abbr.replace(/\s+/g, "")} ${ref.chapter}:${ref.verse}`.replace(/\s+/g, "") : "";
+  const abbrCompact = abbr
+    ? `${abbr.replace(/\s+/g, "")} ${ref.chapter}:${ref.verse}`.replace(
+        /\s+/g,
+        ""
+      )
+    : "";
 
   return Array.from(new Set([full, abbrSpaced, abbrCompact].filter(Boolean)));
 }
@@ -54,9 +70,7 @@ export async function ensureScriptureNote(
   if (existing) return;
 
   const folder = path.split("/").slice(0, -1).join("/");
-  if (!(await vault.adapter.exists(folder))) {
-    await vault.createFolder(folder);
-  }
+  await ensureFolderPath(vault, folder);
 
   const html = await fetcher.get(ref.nasbUrl, true);
   const text = extractNasbText(html) || "";
@@ -77,15 +91,10 @@ export async function ensureScriptureNote(
     "related_strongs:",
     ...relatedStrongLinks.map((l) => `  - "${l}"`),
     "---",
-    ""
+    "",
   ].join("\n");
 
-  const body = [
-    `# ${ref.display}`,
-    "",
-    text.trim(),
-    ""
-  ].join("\n");
+  const body = [`# ${ref.display}`, "", text.trim(), ""].join("\n");
 
   console.log("[BibleHub] Creating scripture note:", path);
   new Notice(`[BibleHub] Creating scripture note: ${path}`);
@@ -94,7 +103,8 @@ export async function ensureScriptureNote(
 
 function extractNasbText(html: string): string {
   // Find the NASB 1995 section and capture the verse text that follows it
-  const re = /NASB 1995<\/a><\/span><br \/>([\s\S]*?)(?:<span class="versiontext">|<span class="p">)/i;
+  const re =
+    /NASB 1995<\/a><\/span><br \/>([\s\S]*?)(?:<span class="versiontext">|<span class="p">)/i;
   const m = html.match(re);
   if (!m) return "";
   return stripHtml(m[1]).replace(/\s+/g, " ").trim();
@@ -106,9 +116,29 @@ function stripHtml(s: string): string {
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, "\"")
+    .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .trim();
+}
+
+async function ensureFolderPath(vault: Vault, folder: string): Promise<void> {
+  const clean = folder.replace(/^\/+|\/+$/g, "");
+  if (!clean) return;
+
+  const parts = clean.split("/").filter(Boolean);
+  let current = "";
+
+  for (const part of parts) {
+    if (/[\\:*?"<>|]/.test(part)) {
+      throw new Error(`Invalid folder name segment: ${part}`);
+    }
+
+    current = current ? `${current}/${part}` : part;
+    const path = normalizePath(current);
+    if (!(await vault.adapter.exists(path))) {
+      await vault.createFolder(path);
+    }
+  }
 }

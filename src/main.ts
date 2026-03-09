@@ -9,14 +9,23 @@ export default class BibleHubLexiconImporter extends Plugin {
   settings: PluginSettings;
 
   async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loaded = (await this.loadData()) as Partial<PluginSettings> | null;
+    this.settings = {
+      recipe: {
+        ...DEFAULT_SETTINGS.recipe,
+        ...(loaded?.recipe ?? {}),
+      },
+    };
     // Migrate older settings to include related_strongs crawling + new options
     const fe = new Set(this.settings.recipe.followEdges ?? []);
     fe.add("see_also");
     fe.add("related_strongs");
     this.settings.recipe.followEdges = Array.from(fe);
 
-    if (!this.settings.recipe.linkTypes || this.settings.recipe.linkTypes.length === 0) {
+    if (
+      !this.settings.recipe.linkTypes ||
+      this.settings.recipe.linkTypes.length === 0
+    ) {
       this.settings.recipe.linkTypes = ["strongs", "scripture"];
     }
 
@@ -33,8 +42,11 @@ export default class BibleHubLexiconImporter extends Plugin {
     }
 
     // Remove short_definition from title pattern if still present
-    if (this.settings.recipe.noteTitlePattern?.includes("{{short_definition}}")) {
-      this.settings.recipe.noteTitlePattern = "{{strong}} — {{lemma}} ({{transliteration}})";
+    if (
+      this.settings.recipe.noteTitlePattern?.includes("{{short_definition}}")
+    ) {
+      this.settings.recipe.noteTitlePattern =
+        "{{strong}} — {{lemma}} ({{transliteration}})";
     }
 
     this.addSettingTab(new SettingsTab(this.app, this));
@@ -52,13 +64,26 @@ export default class BibleHubLexiconImporter extends Plugin {
 
         const strong = this.normalizeSeedToStrong(seed);
         if (!strong) {
-          new Notice("Could not parse Strong's ID. Try G2198, H1623, or a BibleHub Strong's URL.");
+          new Notice(
+            "Could not parse Strong's ID. Try G2198, H1623, or a BibleHub Strong's URL."
+          );
           return;
         }
 
         const recipe = this.settings.recipe;
+        const invalidSegment =
+          firstInvalidFolderSegment(recipe.rootFolder) ??
+          firstInvalidFolderSegment(recipe.scriptureRootFolder);
+        if (invalidSegment) {
+          new Notice(
+            `Invalid folder segment in settings: ${invalidSegment}. Please remove characters like : \\ * ? \" < > |`
+          );
+          return;
+        }
 
-        new Notice(`Importing ${strong} (depth ${recipe.maxDepth}, max ${recipe.maxNodes} nodes)...`);
+        new Notice(
+          `Importing ${strong} (depth ${recipe.maxDepth}, max ${recipe.maxNodes} nodes)...`
+        );
 
         const result = await crawler.run(strong, recipe, false);
 
@@ -67,11 +92,13 @@ export default class BibleHubLexiconImporter extends Plugin {
           `Created: ${result.created}`,
           `Updated: ${result.updated}`,
           `Skipped: ${result.skipped}`,
-          result.errors.length ? `Errors: ${result.errors.length}` : ""
-        ].filter(Boolean).join(" ");
+          result.errors.length ? `Errors: ${result.errors.length}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
 
         new Notice(msg);
-      }
+      },
     });
   }
 
@@ -120,6 +147,17 @@ export default class BibleHubLexiconImporter extends Plugin {
   }
 }
 
+function firstInvalidFolderSegment(folder: string): string | null {
+  const clean = (folder ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!clean) return "(empty)";
+
+  for (const part of clean.split("/").filter(Boolean)) {
+    if (/[\\:*?"<>|]/.test(part)) return part;
+  }
+
+  return null;
+}
+
 class SeedModal extends Modal {
   private value: string = "";
   private resolved = false;
@@ -138,7 +176,7 @@ class SeedModal extends Modal {
 
     contentEl.createEl("h2", { text: "Import BibleHub Strong's" });
     contentEl.createEl("p", {
-      text: "Enter a Strong's ID (G2198 / H1623) or a BibleHub Strong's URL."
+      text: "Enter a Strong's ID (G2198 / H1623) or a BibleHub Strong's URL.",
     });
 
     const input = contentEl.createEl("input", { type: "text" });

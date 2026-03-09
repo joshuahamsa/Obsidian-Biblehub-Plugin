@@ -1,5 +1,5 @@
 import { TFile, Vault, normalizePath, Notice } from "obsidian";
-import type { LexiconEntry, Recipe, SectionKey } from "./types";
+import type { LexiconEntry, Recipe, SectionKey, ScriptureRef } from "./types";
 import { safeFileName } from "./normalize";
 
 export class Writer {
@@ -8,10 +8,10 @@ export class Writer {
   buildTitle(entry: LexiconEntry, recipe: Recipe): string {
     const fill = (s: string) =>
       s
-        .replaceAll("{{strong}}", entry.strong)
-        .replaceAll("{{lemma}}", entry.lemma ?? "")
-        .replaceAll("{{transliteration}}", entry.transliteration ?? "")
-        .replaceAll("{{short_definition}}", "");
+        .replace(/\{\{strong\}\}/g, entry.strong)
+        .replace(/\{\{lemma\}\}/g, entry.lemma ?? "")
+        .replace(/\{\{transliteration\}\}/g, entry.transliteration ?? "")
+        .replace(/\{\{short_definition\}\}/g, "");
 
     return safeFileName(fill(recipe.noteTitlePattern)).trim();
   }
@@ -23,12 +23,14 @@ export class Writer {
 
   async ensureFolder(recipe: Recipe) {
     const folder = normalizePath(recipe.rootFolder.replace(/^\/+|\/+$/g, ""));
-    if (!(await this.vault.adapter.exists(folder))) {
-      await this.vault.createFolder(folder);
-    }
+    await ensureFolderPath(this.vault, folder);
   }
 
-  async upsert(entry: LexiconEntry, recipe: Recipe, renameOnUpdate: boolean): Promise<{ file: TFile; created: boolean }> {
+  async upsert(
+    entry: LexiconEntry,
+    recipe: Recipe,
+    renameOnUpdate: boolean
+  ): Promise<{ file: TFile; created: boolean }> {
     await this.ensureFolder(recipe);
     const title = this.buildTitle(entry, recipe);
     const path = this.filePath(title, recipe);
@@ -54,10 +56,16 @@ export class Writer {
     const now = new Date().toISOString().slice(0, 10);
 
     const links_see_also = entry.links.see_also.map((id) => `[[${id}]]`);
-    const relatedStrongTitles = (entry as any).relatedStrongTitles as Array<{id:string,title:string}> | undefined;
-    const links_related = relatedStrongTitles ? relatedStrongTitles.map((r) => `[[${r.title}|${r.id}]]`) : entry.links.related_strongs.map((id) => `[[${id}]]`);
+    const relatedStrongTitles = (entry as any).relatedStrongTitles as
+      | Array<{ id: string; title: string }>
+      | undefined;
+    const links_related = relatedStrongTitles
+      ? relatedStrongTitles.map((r) => `[[${r.title}|${r.id}]]`)
+      : entry.links.related_strongs.map((id) => `[[${id}]]`);
     const links_topical = entry.links.topical.map((id) => `[[${id}]]`);
-    const links_scripture = entry.links.scripture.map((r) => `[[${scriptureLinkPath(recipe, r)}|${r.display}]]`);
+    const links_scripture = entry.links.scripture.map(
+      (r) => `[[${scriptureLinkPath(recipe, r)}|${r.display}]]`
+    );
 
     const yaml = [
       "---",
@@ -97,15 +105,21 @@ export class Writer {
       `crawl_depth: ${recipe.maxDepth}`,
       `crawl_root: ${entry.strong}`,
       "---",
-      ""
+      "",
     ].join("\n");
 
-    const titleLine = `# ${entry.strong} — ${entry.lemma ?? ""} (${entry.transliteration ?? ""})`.trim();
+    const titleLine = `# ${entry.strong} — ${entry.lemma ?? ""} (${
+      entry.transliteration ?? ""
+    })`.trim();
 
     const blocks = { ...entry.blocks };
     if (recipe.linkTypes.includes("scripture") && links_scripture.length) {
       for (const key of Object.keys(blocks) as Array<keyof typeof blocks>) {
-        if (blocks[key]) blocks[key] = linkifyScriptureRefs(blocks[key]!, entry.links.scripture);
+        if (blocks[key])
+          blocks[key] = linkifyScriptureRefs(
+            blocks[key]!,
+            entry.links.scripture
+          );
       }
     }
 
@@ -117,7 +131,7 @@ export class Writer {
       forms_transliterations: "Forms & Transliterations",
       englishmans_concordance: "Englishman's Concordance",
       concordance: "Concordance",
-      topical_lexicon: "Topical Lexicon"
+      topical_lexicon: "Topical Lexicon",
     };
 
     const sectionOrder: SectionKey[] = [
@@ -128,7 +142,7 @@ export class Writer {
       "forms_transliterations",
       "englishmans_concordance",
       "concordance",
-      "topical_lexicon"
+      "topical_lexicon",
     ];
 
     const sections = sectionOrder
@@ -161,7 +175,7 @@ export class Writer {
       "",
       "**Scripture references:**  ",
       recipe.linkTypes.includes("scripture") ? links_scripture.join(", ") : "",
-      ""
+      "",
     ].join("\n");
 
     return yaml + body;
@@ -172,7 +186,11 @@ export class Writer {
    * <!-- imported: section_key -->
    * For this draft we keep it simple: if marker exists, replace until next heading/marker.
    */
-  private async mergeIntoFile(file: TFile, entry: LexiconEntry, recipe: Recipe): Promise<void> {
+  private async mergeIntoFile(
+    file: TFile,
+    entry: LexiconEntry,
+    recipe: Recipe
+  ): Promise<void> {
     const original = await this.vault.read(file);
     let text = original;
 
@@ -187,7 +205,31 @@ export class Writer {
   }
 }
 
-function renderSection(title: string, key: SectionKey, content?: string): string[] {
+async function ensureFolderPath(vault: Vault, folder: string): Promise<void> {
+  const clean = folder.replace(/^\/+|\/+$/g, "");
+  if (!clean) return;
+
+  const parts = clean.split("/").filter(Boolean);
+  let current = "";
+
+  for (const part of parts) {
+    if (/[\\:*?"<>|]/.test(part)) {
+      throw new Error(`Invalid folder name segment: ${part}`);
+    }
+
+    current = current ? `${current}/${part}` : part;
+    const path = normalizePath(current);
+    if (!(await vault.adapter.exists(path))) {
+      await vault.createFolder(path);
+    }
+  }
+}
+
+function renderSection(
+  title: string,
+  key: SectionKey,
+  content?: string
+): string[] {
   const block = (content ?? "").trim();
   return [
     `## ${title}`,
@@ -195,11 +237,15 @@ function renderSection(title: string, key: SectionKey, content?: string): string
     block || "",
     "",
     "---",
-    ""
+    "",
   ];
 }
 
-function replaceImportedBlock(doc: string, key: string, replacement: string): string {
+function replaceImportedBlock(
+  doc: string,
+  key: string,
+  replacement: string
+): string {
   const marker = `<!-- imported: ${key} -->`;
   const idx = doc.indexOf(marker);
   if (idx < 0) return doc; // marker not present, skip in v1
@@ -211,15 +257,24 @@ function replaceImportedBlock(doc: string, key: string, replacement: string): st
   const nextMarker = rest.indexOf("\n<!-- imported:");
   let endRel = -1;
 
-  if (nextHeading >= 0 && nextMarker >= 0) endRel = Math.min(nextHeading, nextMarker);
+  if (nextHeading >= 0 && nextMarker >= 0)
+    endRel = Math.min(nextHeading, nextMarker);
   else if (nextHeading >= 0) endRel = nextHeading;
   else if (nextMarker >= 0) endRel = nextMarker;
   else endRel = rest.length;
 
   const end = afterMarker + endRel;
-  return doc.slice(0, afterMarker) + "\n" + (replacement.trim() ? replacement.trim() + "\n" : "\n") + doc.slice(end);
+  return (
+    doc.slice(0, afterMarker) +
+    "\n" +
+    (replacement.trim() ? replacement.trim() + "\n" : "\n") +
+    doc.slice(end)
+  );
 }
-function linkifyScriptureRefs(text: string, refs: Array<{ display: string }>): string {
+function linkifyScriptureRefs(
+  text: string,
+  refs: Array<{ display: string }>
+): string {
   let out = text;
   for (const r of refs) {
     if (!r.display) continue;
@@ -229,9 +284,11 @@ function linkifyScriptureRefs(text: string, refs: Array<{ display: string }>): s
   return out;
 }
 
-
 function scriptureLinkPath(recipe: Recipe, ref: ScriptureRef): string {
-  const book = ref.slug.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const book = ref.slug
+    .split("_")
+    .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
   const folder = recipe.scriptureRootFolder.replace(/^\/+|\/+$/g, "");
-  return `${folder}/${book}/${ref.chapter}-${ref.verse}`;
+  return `${folder}/${book}/${book}-${ref.chapter}-${ref.verse}`;
 }

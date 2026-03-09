@@ -15,11 +15,17 @@ export class Crawler {
     private writer: Writer
   ) {}
 
-  async run(rootStrong: string, recipe: Recipe, renameOnUpdate: boolean): Promise<CrawlResult> {
+  async run(
+    rootStrong: string,
+    recipe: Recipe,
+    renameOnUpdate: boolean
+  ): Promise<CrawlResult> {
     this.fetcher.setRateLimit(recipe.rateLimitMs);
 
     const res: CrawlResult = { created: 0, updated: 0, skipped: 0, errors: [] };
-    const { lemmaToMeta, strongToTitle } = await this.buildLemmaIndex(recipe.rootFolder);
+    const { lemmaToMeta, strongToTitle } = await this.buildLemmaIndex(
+      recipe.rootFolder
+    );
     const seen = new Set<string>();
     const q: QueueItem[] = [{ strong: rootStrong, depth: 0 }];
 
@@ -44,7 +50,16 @@ export class Crawler {
         let entry: LexiconEntry = parseEntryFromStrongsPage(strong, url, html);
 
         // update lemma index with current entry
-        if (entry.lemma) lemmaIndex.set(entry.lemma, entry.strong);
+        if (entry.lemma) {
+          lemmaToMeta.set(entry.lemma, {
+            strong: entry.strong,
+            title: this.writer.buildTitle(entry, recipe),
+          });
+          strongToTitle.set(
+            entry.strong,
+            this.writer.buildTitle(entry, recipe)
+          );
+        }
 
         if (recipe.linkGreekHebrew) {
           entry = await this.applyLemmaLinks(entry, lemmaToMeta, recipe);
@@ -56,11 +71,21 @@ export class Crawler {
         if (up.created) res.created++;
         else res.updated++;
 
-        if (recipe.linkTypes.includes("scripture") && entry.links.scripture.length) {
-          const related = Array.from(new Set([entry.strong, ...entry.links.related_strongs]))
-            .map((id) => `[[${id}]]`);
+        if (
+          recipe.linkTypes.includes("scripture") &&
+          entry.links.scripture.length
+        ) {
+          const related = Array.from(
+            new Set([entry.strong, ...entry.links.related_strongs])
+          ).map((id) => this.strongLinkForScripture(id, recipe, strongToTitle));
           for (const ref of entry.links.scripture) {
-            await ensureScriptureNote(this.vault, this.fetcher, recipe.scriptureRootFolder, ref, related);
+            await ensureScriptureNote(
+              this.vault,
+              this.fetcher,
+              recipe.scriptureRootFolder,
+              ref,
+              related
+            );
           }
         }
 
@@ -70,7 +95,6 @@ export class Crawler {
             if (!seen.has(next)) q.push({ strong: next, depth: depth + 1 });
           }
         }
-
       } catch (e: any) {
         res.errors.push({ id: strong, error: e?.message ?? String(e) });
       }
@@ -91,9 +115,14 @@ export class Crawler {
     return Array.from(new Set(out));
   }
 
-  private async buildLemmaIndex(rootFolder: string): Promise<{ lemmaToMeta: Map<string, { strong: string; title: string }>, strongToTitle: Map<string, string> }> {
+  private async buildLemmaIndex(rootFolder: string): Promise<{
+    lemmaToMeta: Map<string, { strong: string; title: string }>;
+    strongToTitle: Map<string, string>;
+  }> {
     const folder = rootFolder.replace(/^\/+|\/+$/g, "");
-    const files = this.vault.getMarkdownFiles().filter(f => f.path.startsWith(folder + "/"));
+    const files = this.vault
+      .getMarkdownFiles()
+      .filter((f) => f.path.startsWith(folder + "/"));
     const map = new Map<string, { strong: string; title: string }>();
     const strongToTitle = new Map<string, string>();
     for (const f of files) {
@@ -111,7 +140,11 @@ export class Crawler {
     return { lemmaToMeta: map, strongToTitle };
   }
 
-  private async applyLemmaLinks(entry: LexiconEntry, lemmaIndex: Map<string, { strong: string; title: string }>, recipe: Recipe): Promise<LexiconEntry> {
+  private async applyLemmaLinks(
+    entry: LexiconEntry,
+    lemmaIndex: Map<string, { strong: string; title: string }>,
+    recipe: Recipe
+  ): Promise<LexiconEntry> {
     const blocks = { ...entry.blocks };
     const lemmasFound = new Set<string>();
     const tokens = extractGreekHebrewTokens(Object.values(blocks).join("\n"));
@@ -139,7 +172,11 @@ export class Crawler {
     return { ...entry, blocks };
   }
 
-  private async ensureAliasForStrong(strong: string, lemma: string, recipe: Recipe): Promise<void> {
+  private async ensureAliasForStrong(
+    strong: string,
+    lemma: string,
+    recipe: Recipe
+  ): Promise<void> {
     const existing = this.findExistingByStrongIdFallback(strong, recipe);
     if (!existing) {
       // Do not create placeholders; wait for full note creation
@@ -154,11 +191,44 @@ export class Crawler {
    * Draft fallback: checks if there is any note in the folder containing the strong ID in its filename.
    * Later you'll want an index (strong -> file path) by scanning YAML strong: fields.
    */
-  private findExistingByStrongIdFallback(strong: string, recipe: Recipe): TFile | null {
+  private findExistingByStrongIdFallback(
+    strong: string,
+    recipe: Recipe
+  ): TFile | null {
     const folder = recipe.rootFolder.replace(/^\/+|\/+$/g, "");
-    const files = this.vault.getMarkdownFiles().filter(f => f.path.startsWith(folder + "/"));
-    const hit = files.find(f => f.basename.includes(strong));
+    const files = this.vault
+      .getMarkdownFiles()
+      .filter((f) => f.path.startsWith(folder + "/"));
+    const hit = files.find((f) => f.basename.includes(strong));
     return hit ?? null;
+  }
+
+  private applyRelatedStrongLinks(
+    entry: LexiconEntry,
+    strongToTitle: Map<string, string>
+  ): LexiconEntry {
+    const relatedStrongTitles = entry.links.related_strongs.map((id) => ({
+      id,
+      title: strongToTitle.get(id) ?? id,
+    }));
+
+    return {
+      ...entry,
+      relatedStrongTitles,
+    } as LexiconEntry;
+  }
+
+  private strongLinkForScripture(
+    strong: string,
+    recipe: Recipe,
+    strongToTitle: Map<string, string>
+  ): string {
+    const title = strongToTitle.get(strong);
+    if (!title) return `[[${strong}]]`;
+
+    const folder = recipe.rootFolder.replace(/^\/+|\/+$/g, "");
+    const notePath = normalizePath(`${folder}/${title}`);
+    return `[[${notePath}|${strong}]]`;
   }
 }
 
@@ -172,12 +242,20 @@ function extractGreekHebrewTokens(text: string): string[] {
   return Array.from(tokens);
 }
 
-function replaceTokenWithLink(text: string, token: string, link: string): string {
+function replaceTokenWithLink(
+  text: string,
+  token: string,
+  link: string
+): string {
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return text.replace(new RegExp(escaped, "g"), link);
 }
 
-function addAliasToFrontmatter(text: string, alias: string, strong: string): string {
+function addAliasToFrontmatter(
+  text: string,
+  alias: string,
+  strong: string
+): string {
   if (!text.startsWith("---")) return text;
   const end = text.indexOf("\n---", 3);
   if (end < 0) return text;
