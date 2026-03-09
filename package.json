@@ -1,6 +1,6 @@
 {
   "name": "obsidian-biblehub-lexicon-importer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Import BibleHub Strong's lexicon entries into graph-ready notes and optionally crawl typed links.",
   "main": "main.js",
   "scripts": {
