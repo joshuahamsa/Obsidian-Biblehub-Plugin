@@ -4,6 +4,7 @@ export interface InterlinearWord {
   original?: string;
   gloss?: string;
   morphology?: string;
+  morphologyDetail?: string;
 }
 
 export function parseInterlinearWords(html: string): InterlinearWord[] {
@@ -22,9 +23,17 @@ export function parseInterlinearWords(html: string): InterlinearWord[] {
     const original =
       extractSpanText(table, "greek") ?? extractSpanText(table, "hebrew");
     const gloss = normalizeGloss(extractSpanText(table, "eng"));
-    const morphology = extractMorphCode(table);
+    const { code: morphology, detail: morphologyDetail } =
+      extractMorphCode(table);
 
-    out.push({ strong, transliteration, original, gloss, morphology });
+    out.push({
+      strong,
+      transliteration,
+      original,
+      gloss,
+      morphology,
+      morphologyDetail,
+    });
   }
 
   return out;
@@ -41,15 +50,23 @@ function extractSpanText(html: string, className: string): string | undefined {
   return text || undefined;
 }
 
-function extractMorphCode(html: string): string | undefined {
+function extractMorphCode(html: string): { code?: string; detail?: string } {
   const all = Array.from(
     html.matchAll(/<span class="(?:strongsnt2|strongsnt)">([\s\S]*?)<\/span>/gi)
   );
-  if (!all.length) return undefined;
+  if (!all.length) return {};
 
   const last = all[all.length - 1][1];
-  const text = stripHtml(last);
-  return text || undefined;
+  const text = stripHtml(last) || undefined;
+  const titleMatch = last.match(/title="([^"]+)"/i);
+  const detail = titleMatch
+    ? decodeHtmlEntities(titleMatch[1]).trim()
+    : undefined;
+
+  return {
+    code: text,
+    detail: detail || undefined,
+  };
 }
 
 function normalizeGloss(gloss?: string): string | undefined {

@@ -1,9 +1,9 @@
 export type Lang = "greek" | "hebrew";
 
 export type EdgeType =
-  | "see_also"          // HELPS "See ####"
-  | "related_strongs"   // Thayer refs etc.
-  | "topical";          // Topical lexicon (stubbed)
+  | "see_also" // HELPS "See ####"
+  | "related_strongs" // Thayer refs etc.
+  | "topical"; // Topical lexicon (stubbed)
 
 export type LinkType = "strongs" | "scripture";
 
@@ -40,7 +40,7 @@ export interface LexiconEntry {
   short_definition?: string;
 
   source_primary: string; // strongs page
-  source_alt: string[];   // greek/hebrew page etc.
+  source_alt: string[]; // greek/hebrew page etc.
 
   // Imported blocks to drop into template sections
   blocks: Partial<Record<SectionKey, string>>;
@@ -68,6 +68,7 @@ export interface Recipe {
   followEdges: EdgeType[];
   linkTypes: LinkType[]; // strongs, scripture
   linkGreekHebrew: boolean; // auto-link Greek/Hebrew terms
+  linkMorphologyTags: boolean; // create/link morphology tag notes in scripture context
   lemmaAliasMode: "primary" | "all";
 
   maxDepth: number;

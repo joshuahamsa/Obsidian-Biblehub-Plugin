@@ -33,6 +33,10 @@ export default class BibleHubLexiconImporter extends Plugin {
       this.settings.recipe.linkGreekHebrew = true;
     }
 
+    if (this.settings.recipe.linkMorphologyTags === undefined) {
+      this.settings.recipe.linkMorphologyTags = true;
+    }
+
     if (!this.settings.recipe.lemmaAliasMode) {
       this.settings.recipe.lemmaAliasMode = "primary";
     }

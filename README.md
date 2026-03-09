@@ -76,6 +76,8 @@ Scripture notes include:
 
 - NASB verse text.
 - `Why This Verse Is Linked` section with compact matched interlinear words.
+- Optional morphology tag links (default ON), with auto-created notes under `Lexicon/Morphology`.
+- Morphology notes include parsed meaning snippets from BibleHub grammar/parse metadata when available.
 - Links back to lexicon notes using resolved lexicon paths.
 
 ## Development

@@ -15,11 +15,12 @@ const DEFAULT_RECIPE: Recipe = {
     "thayers",
     "forms_transliterations",
     "englishmans_concordance",
-    "topical_lexicon"
+    "topical_lexicon",
   ],
   followEdges: ["see_also", "related_strongs"],
   linkTypes: ["strongs", "scripture"],
   linkGreekHebrew: true,
+  linkMorphologyTags: true,
   lemmaAliasMode: "primary",
   maxDepth: 2,
   maxNodes: 100,
@@ -27,11 +28,11 @@ const DEFAULT_RECIPE: Recipe = {
   skipExisting: true,
   rootFolder: "Lexicon/Strongs",
   scriptureRootFolder: "Scripture",
-  noteTitlePattern: "{{strong}} — {{lemma}} ({{transliteration}})"
+  noteTitlePattern: "{{strong}} — {{lemma}} ({{transliteration}})",
 };
 
 export const DEFAULT_SETTINGS: PluginSettings = {
-  recipe: DEFAULT_RECIPE
+  recipe: DEFAULT_RECIPE,
 };
 
 export class SettingsTab extends PluginSettingTab {
@@ -53,7 +54,8 @@ export class SettingsTab extends PluginSettingTab {
         t
           .setValue(this.plugin.settings.recipe.rootFolder)
           .onChange(async (v) => {
-            this.plugin.settings.recipe.rootFolder = v.trim() || "Lexicon/Strongs";
+            this.plugin.settings.recipe.rootFolder =
+              v.trim() || "Lexicon/Strongs";
             await this.plugin.saveSettings();
           })
       );
@@ -65,7 +67,8 @@ export class SettingsTab extends PluginSettingTab {
         t
           .setValue(this.plugin.settings.recipe.scriptureRootFolder)
           .onChange(async (v) => {
-            this.plugin.settings.recipe.scriptureRootFolder = v.trim() || "Scripture";
+            this.plugin.settings.recipe.scriptureRootFolder =
+              v.trim() || "Scripture";
             await this.plugin.saveSettings();
           })
       );
@@ -78,12 +81,12 @@ export class SettingsTab extends PluginSettingTab {
       forms_transliterations: "Forms & Transliterations",
       englishmans_concordance: "Englishman's Concordance",
       concordance: "Concordance",
-      topical_lexicon: "Topical Lexicon"
+      topical_lexicon: "Topical Lexicon",
     };
 
     const linkLabels: Record<LinkType, string> = {
       strongs: "Strong's number links",
-      scripture: "Scripture reference links"
+      scripture: "Scripture reference links",
     };
 
     new Setting(containerEl)
@@ -91,18 +94,16 @@ export class SettingsTab extends PluginSettingTab {
       .setDesc("Choose which sections to include in generated notes.");
 
     for (const key of Object.keys(sectionLabels) as SectionKey[]) {
-      new Setting(containerEl)
-        .setName(sectionLabels[key])
-        .addToggle((tg) =>
-          tg
-            .setValue(this.plugin.settings.recipe.includeSections.includes(key))
-            .onChange(async (v) => {
-              const set = new Set(this.plugin.settings.recipe.includeSections);
-              v ? set.add(key) : set.delete(key);
-              this.plugin.settings.recipe.includeSections = Array.from(set);
-              await this.plugin.saveSettings();
-            })
-        );
+      new Setting(containerEl).setName(sectionLabels[key]).addToggle((tg) =>
+        tg
+          .setValue(this.plugin.settings.recipe.includeSections.includes(key))
+          .onChange(async (v) => {
+            const set = new Set(this.plugin.settings.recipe.includeSections);
+            v ? set.add(key) : set.delete(key);
+            this.plugin.settings.recipe.includeSections = Array.from(set);
+            await this.plugin.saveSettings();
+          })
+      );
     }
 
     new Setting(containerEl)
@@ -110,28 +111,42 @@ export class SettingsTab extends PluginSettingTab {
       .setDesc("Choose which link types to generate.");
 
     for (const key of Object.keys(linkLabels) as LinkType[]) {
-      new Setting(containerEl)
-        .setName(linkLabels[key])
-        .addToggle((tg) =>
-          tg
-            .setValue(this.plugin.settings.recipe.linkTypes.includes(key))
-            .onChange(async (v) => {
-              const set = new Set(this.plugin.settings.recipe.linkTypes);
-              v ? set.add(key) : set.delete(key);
-              this.plugin.settings.recipe.linkTypes = Array.from(set);
-              await this.plugin.saveSettings();
-            })
-        );
+      new Setting(containerEl).setName(linkLabels[key]).addToggle((tg) =>
+        tg
+          .setValue(this.plugin.settings.recipe.linkTypes.includes(key))
+          .onChange(async (v) => {
+            const set = new Set(this.plugin.settings.recipe.linkTypes);
+            v ? set.add(key) : set.delete(key);
+            this.plugin.settings.recipe.linkTypes = Array.from(set);
+            await this.plugin.saveSettings();
+          })
+      );
     }
 
     new Setting(containerEl)
       .setName("Auto-link Greek/Hebrew terms")
-      .setDesc("Link Greek/Hebrew tokens to Strong's notes (creates placeholders if missing). Turn off Skip existing if you want alias updates.")
+      .setDesc(
+        "Link Greek/Hebrew tokens to Strong's notes (creates placeholders if missing). Turn off Skip existing if you want alias updates."
+      )
       .addToggle((tg) =>
         tg
           .setValue(this.plugin.settings.recipe.linkGreekHebrew)
           .onChange(async (v) => {
             this.plugin.settings.recipe.linkGreekHebrew = v;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Link morphology tags")
+      .setDesc(
+        "Create and link morphology tag notes from scripture interlinear context (for example, N-fsc, Conj-w)."
+      )
+      .addToggle((tg) =>
+        tg
+          .setValue(this.plugin.settings.recipe.linkMorphologyTags)
+          .onChange(async (v) => {
+            this.plugin.settings.recipe.linkMorphologyTags = v;
             await this.plugin.saveSettings();
           })
       );
@@ -196,7 +211,9 @@ export class SettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Skip existing notes")
-      .setDesc("If ON, existing Strong's notes will not be refetched/rewritten (only linked).")
+      .setDesc(
+        "If ON, existing Strong's notes will not be refetched/rewritten (only linked)."
+      )
       .addToggle((tg) =>
         tg
           .setValue(this.plugin.settings.recipe.skipExisting)
@@ -205,6 +222,5 @@ export class SettingsTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
-
   }
 }

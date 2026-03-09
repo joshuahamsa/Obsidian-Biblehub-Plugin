@@ -100,7 +100,8 @@ export class Crawler {
               ref,
               related,
               [entry.strong],
-              interlinearWords
+              interlinearWords,
+              recipe.linkMorphologyTags
             );
           }
         }

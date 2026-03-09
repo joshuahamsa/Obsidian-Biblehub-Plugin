@@ -49,6 +49,7 @@ var DEFAULT_RECIPE = {
   followEdges: ["see_also", "related_strongs"],
   linkTypes: ["strongs", "scripture"],
   linkGreekHebrew: true,
+  linkMorphologyTags: true,
   lemmaAliasMode: "primary",
   maxDepth: 2,
   maxNodes: 100,
@@ -111,6 +112,10 @@ var SettingsTab = class extends import_obsidian.PluginSettingTab {
     }
     new import_obsidian.Setting(containerEl).setName("Auto-link Greek/Hebrew terms").setDesc("Link Greek/Hebrew tokens to Strong's notes (creates placeholders if missing). Turn off Skip existing if you want alias updates.").addToggle((tg) => tg.setValue(this.plugin.settings.recipe.linkGreekHebrew).onChange(async (v) => {
       this.plugin.settings.recipe.linkGreekHebrew = v;
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("Link morphology tags").setDesc("Create and link morphology tag notes from scripture interlinear context (for example, N-fsc, Conj-w).").addToggle((tg) => tg.setValue(this.plugin.settings.recipe.linkMorphologyTags).onChange(async (v) => {
+      this.plugin.settings.recipe.linkMorphologyTags = v;
       await this.plugin.saveSettings();
     }));
     new import_obsidian.Setting(containerEl).setName("Lemma aliases").setDesc("Choose alias behavior for lemmas when auto-linking.").addDropdown((dd) => dd.addOption("primary", "Primary lemma only").addOption("all", "All lemmas found in note").setValue(this.plugin.settings.recipe.lemmaAliasMode).onChange(async (v) => {
@@ -452,8 +457,15 @@ function parseInterlinearWords(html) {
     const transliteration = extractSpanText(table, "translit");
     const original = (_b = extractSpanText(table, "greek")) != null ? _b : extractSpanText(table, "hebrew");
     const gloss = normalizeGloss(extractSpanText(table, "eng"));
-    const morphology = extractMorphCode(table);
-    out.push({ strong, transliteration, original, gloss, morphology });
+    const { code: morphology, detail: morphologyDetail } = extractMorphCode(table);
+    out.push({
+      strong,
+      transliteration,
+      original,
+      gloss,
+      morphology,
+      morphologyDetail
+    });
   }
   return out;
 }
@@ -468,10 +480,15 @@ function extractSpanText(html, className) {
 function extractMorphCode(html) {
   const all = Array.from(html.matchAll(/<span class="(?:strongsnt2|strongsnt)">([\s\S]*?)<\/span>/gi));
   if (!all.length)
-    return void 0;
+    return {};
   const last = all[all.length - 1][1];
-  const text = stripHtml(last);
-  return text || void 0;
+  const text = stripHtml(last) || void 0;
+  const titleMatch = last.match(/title="([^"]+)"/i);
+  const detail = titleMatch ? decodeHtmlEntities(titleMatch[1]).trim() : void 0;
+  return {
+    code: text,
+    detail: detail || void 0
+  };
 }
 function normalizeGloss(gloss) {
   if (!gloss)
@@ -494,6 +511,7 @@ function decodeHtmlEntities(text) {
 }
 
 // src/scripture.ts
+var MORPHOLOGY_ROOT_FOLDER = "Lexicon/Morphology";
 function slugToBookName(slug) {
   const words = slug.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1));
   return words.join(" ");
@@ -529,7 +547,7 @@ function bookAbbrev(book) {
   }
   return parts[0].slice(0, 3);
 }
-async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStrongs, contextStrongIds, preParsedInterlinearWords) {
+async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStrongs, contextStrongIds, preParsedInterlinearWords, linkMorphologyTags = true) {
   const path = scriptureNotePath(rootFolder, ref);
   const existing = vault.getAbstractFileByPath(path);
   if (existing)
@@ -539,6 +557,13 @@ async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStron
   const html = await fetcher.get(ref.nasbUrl, true);
   const text = extractNasbText(html) || "";
   const interlinearWords = preParsedInterlinearWords != null ? preParsedInterlinearWords : parseInterlinearWords(await fetcher.get(ref.interlinearUrl, true));
+  const contextSet = new Set(contextStrongIds);
+  const matchedWords = interlinearWords.filter((w) => contextSet.has(w.strong));
+  if (linkMorphologyTags) {
+    const tags = collectMorphologyTags(matchedWords);
+    const definitions = collectMorphologyDefinitions(matchedWords);
+    await ensureMorphologyNotes(vault, tags, definitions);
+  }
   const aliases = scriptureAliases(ref).map((a) => `  - "${a}"`);
   const yaml = [
     "---",
@@ -561,14 +586,14 @@ async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStron
     "",
     text.trim(),
     "",
-    ...renderInterlinearContext(interlinearWords, relatedStrongs, contextStrongIds),
+    ...renderInterlinearContext(interlinearWords, relatedStrongs, contextStrongIds, linkMorphologyTags),
     ""
   ].join("\n");
   console.log("[BibleHub] Creating scripture note:", path);
   new import_obsidian4.Notice(`[BibleHub] Creating scripture note: ${path}`);
   await vault.create(path, yaml + body);
 }
-function renderInterlinearContext(words, relatedStrongs, contextStrongIds) {
+function renderInterlinearContext(words, relatedStrongs, contextStrongIds, linkMorphologyTags) {
   var _a, _b;
   const relatedById = new Map(relatedStrongs.map((r) => [r.id, r.link]));
   const contextSet = new Set(contextStrongIds);
@@ -603,7 +628,7 @@ function renderInterlinearContext(words, relatedStrongs, contextStrongIds) {
       (_b = word.original) != null ? _b : "?",
       word.transliteration ? `(${word.transliteration})` : "",
       word.gloss ? `- ${word.gloss}` : "",
-      word.morphology ? `[${word.morphology}]` : ""
+      renderMorphology(word.morphology, linkMorphologyTags)
     ].filter(Boolean);
     lines.push(`- ${strongLink}: ${pieces.join(" ")}`);
   }
@@ -611,6 +636,136 @@ function renderInterlinearContext(words, relatedStrongs, contextStrongIds) {
     lines.push(`- ...and ${matched.length - 12} more matches.`);
   }
   return lines;
+}
+function renderMorphology(morphology, linkTags) {
+  if (!morphology)
+    return "";
+  const tags = parseMorphologyTags(morphology);
+  if (!tags.length)
+    return "";
+  if (!linkTags)
+    return `[${tags.join(" | ")}]`;
+  const linked = tags.map((tag) => morphologyLink(tag));
+  return `[${linked.join(" | ")}]`;
+}
+function parseMorphologyTags(morphology) {
+  const normalized = morphology.replace(/[\u2010\u2011\u2012\u2013\u2014]/g, "-").replace(/\s*\|\s*/g, "|").replace(/\s*,\s*/g, ",").trim();
+  const out = [];
+  const seen = new Set();
+  for (const part of normalized.split(/[|,]/g)) {
+    const tag = part.trim();
+    if (!tag || seen.has(tag))
+      continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+function morphologyLink(tag) {
+  const base = (0, import_obsidian4.normalizePath)(`${MORPHOLOGY_ROOT_FOLDER}/${safeFileName(tag)}`);
+  return `[[${base}|${tag}]]`;
+}
+function collectMorphologyTags(words) {
+  const out = [];
+  const seen = new Set();
+  for (const word of words) {
+    if (!word.morphology)
+      continue;
+    for (const tag of parseMorphologyTags(word.morphology)) {
+      if (seen.has(tag))
+        continue;
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  return out;
+}
+async function ensureMorphologyNotes(vault, tags, definitions) {
+  if (!tags.length)
+    return;
+  await ensureFolderPath2(vault, MORPHOLOGY_ROOT_FOLDER);
+  const now = new Date().toISOString().slice(0, 10);
+  for (const tag of tags) {
+    const fileName = `${safeFileName(tag)}.md`;
+    const path = (0, import_obsidian4.normalizePath)(`${MORPHOLOGY_ROOT_FOLDER}/${fileName}`);
+    const existing = vault.getAbstractFileByPath(path);
+    const definition = definitions.get(tag);
+    if (existing instanceof import_obsidian4.TFile) {
+      await upsertMorphologyNote(vault, existing, tag, definition);
+      continue;
+    }
+    const yaml = [
+      "---",
+      "type: lexicon/morphology",
+      `tag: ${tag}`,
+      `imported_at: ${now}`,
+      "source: biblehub interlinear",
+      "---",
+      ""
+    ].join("\n");
+    const body = [
+      `# ${tag}`,
+      "",
+      "Morphology tag imported from BibleHub interlinear context.",
+      ...definition ? ["", "## Meaning", "", `- ${definition}`] : [],
+      ""
+    ].join("\n");
+    await vault.create(path, yaml + body);
+  }
+}
+async function upsertMorphologyNote(vault, file, tag, definition) {
+  if (!definition)
+    return;
+  const text = await vault.read(file);
+  if (text.includes(`- ${definition}`))
+    return;
+  const hasMeaning = /^## Meaning\s*$/m.test(text);
+  if (!hasMeaning) {
+    const next2 = `${text.trimEnd()}
+
+## Meaning
+
+- ${definition}
+`;
+    await vault.modify(file, next2);
+    return;
+  }
+  const marker = "## Meaning";
+  const idx = text.indexOf(marker);
+  if (idx < 0)
+    return;
+  const insertAt = text.indexOf("\n", idx + marker.length);
+  if (insertAt < 0)
+    return;
+  const next = text.slice(0, insertAt + 1) + `
+- ${definition}` + text.slice(insertAt + 1);
+  await vault.modify(file, next);
+}
+function collectMorphologyDefinitions(words) {
+  var _a;
+  const out = new Map();
+  for (const word of words) {
+    if (!word.morphology || !word.morphologyDetail)
+      continue;
+    const tagGroups = splitMorphologyGroups(word.morphology);
+    const detailGroups = splitMorphologyDetailGroups(word.morphologyDetail);
+    for (let i = 0; i < tagGroups.length; i++) {
+      const tags = tagGroups[i];
+      const detail = (_a = detailGroups[i]) != null ? _a : word.morphologyDetail;
+      for (const tag of tags) {
+        if (!out.has(tag))
+          out.set(tag, detail);
+      }
+    }
+  }
+  return out;
+}
+function splitMorphologyGroups(morphology) {
+  const normalized = morphology.replace(/[\u2010\u2011\u2012\u2013\u2014]/g, "-").replace(/\s*\|\s*/g, "|").replace(/\s*,\s*/g, ",").trim();
+  return normalized.split("|").map((group) => group.split(",").map((x) => x.trim()).filter(Boolean)).filter((group) => group.length > 0);
+}
+function splitMorphologyDetailGroups(detail) {
+  return detail.split(/\s*::\s*/g).map((x) => x.trim()).filter(Boolean);
 }
 function extractNasbText(html) {
   const re = /NASB 1995<\/a><\/span><br \/>([\s\S]*?)(?:<span class="versiontext">|<span class="p">)/i;
@@ -816,7 +971,7 @@ var Crawler = class {
             const hasSeedStrong = interlinearWords.some((word) => word.strong === entry.strong);
             if (!hasSeedStrong)
               continue;
-            await ensureScriptureNote(this.vault, this.fetcher, recipe.scriptureRootFolder, ref, related, [entry.strong], interlinearWords);
+            await ensureScriptureNote(this.vault, this.fetcher, recipe.scriptureRootFolder, ref, related, [entry.strong], interlinearWords, recipe.linkMorphologyTags);
           }
         }
         if (depth < recipe.maxDepth) {
@@ -998,6 +1153,9 @@ var BibleHubLexiconImporter = class extends import_obsidian6.Plugin {
     }
     if (this.settings.recipe.linkGreekHebrew === void 0) {
       this.settings.recipe.linkGreekHebrew = true;
+    }
+    if (this.settings.recipe.linkMorphologyTags === void 0) {
+      this.settings.recipe.linkMorphologyTags = true;
     }
     if (!this.settings.recipe.lemmaAliasMode) {
       this.settings.recipe.lemmaAliasMode = "primary";

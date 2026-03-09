@@ -1,4 +1,4 @@
-import { normalizePath, Vault, Notice } from "obsidian";
+import { normalizePath, Vault, Notice, TFile } from "obsidian";
 import type { ScriptureRef } from "./types";
 import { safeFileName } from "./normalize";
 import { Fetcher } from "./fetcher";
@@ -6,6 +6,7 @@ import type { InterlinearWord } from "./parser/interlinear";
 import { parseInterlinearWords } from "./parser/interlinear";
 
 export type RelatedStrongLink = { id: string; link: string };
+const MORPHOLOGY_ROOT_FOLDER = "Lexicon/Morphology";
 
 export function slugToBookName(slug: string): string {
   const words = slug
@@ -69,7 +70,8 @@ export async function ensureScriptureNote(
   ref: ScriptureRef,
   relatedStrongs: RelatedStrongLink[],
   contextStrongIds: string[],
-  preParsedInterlinearWords?: InterlinearWord[]
+  preParsedInterlinearWords?: InterlinearWord[],
+  linkMorphologyTags = true
 ): Promise<void> {
   const path = scriptureNotePath(rootFolder, ref);
   const existing = vault.getAbstractFileByPath(path);
@@ -83,6 +85,13 @@ export async function ensureScriptureNote(
   const interlinearWords =
     preParsedInterlinearWords ??
     parseInterlinearWords(await fetcher.get(ref.interlinearUrl, true));
+  const contextSet = new Set(contextStrongIds);
+  const matchedWords = interlinearWords.filter((w) => contextSet.has(w.strong));
+  if (linkMorphologyTags) {
+    const tags = collectMorphologyTags(matchedWords);
+    const definitions = collectMorphologyDefinitions(matchedWords);
+    await ensureMorphologyNotes(vault, tags, definitions);
+  }
 
   const aliases = scriptureAliases(ref).map((a) => `  - "${a}"`);
 
@@ -111,7 +120,8 @@ export async function ensureScriptureNote(
     ...renderInterlinearContext(
       interlinearWords,
       relatedStrongs,
-      contextStrongIds
+      contextStrongIds,
+      linkMorphologyTags
     ),
     "",
   ].join("\n");
@@ -124,7 +134,8 @@ export async function ensureScriptureNote(
 function renderInterlinearContext(
   words: ReturnType<typeof parseInterlinearWords>,
   relatedStrongs: RelatedStrongLink[],
-  contextStrongIds: string[]
+  contextStrongIds: string[],
+  linkMorphologyTags: boolean
 ): string[] {
   const relatedById = new Map(relatedStrongs.map((r) => [r.id, r.link]));
   const contextSet = new Set(contextStrongIds);
@@ -165,7 +176,7 @@ function renderInterlinearContext(
       word.original ?? "?",
       word.transliteration ? `(${word.transliteration})` : "",
       word.gloss ? `- ${word.gloss}` : "",
-      word.morphology ? `[${word.morphology}]` : "",
+      renderMorphology(word.morphology, linkMorphologyTags),
     ].filter(Boolean);
     lines.push(`- ${strongLink}: ${pieces.join(" ")}`);
   }
@@ -175,6 +186,174 @@ function renderInterlinearContext(
   }
 
   return lines;
+}
+
+function renderMorphology(
+  morphology: string | undefined,
+  linkTags: boolean
+): string {
+  if (!morphology) return "";
+  const tags = parseMorphologyTags(morphology);
+  if (!tags.length) return "";
+  if (!linkTags) return `[${tags.join(" | ")}]`;
+
+  const linked = tags.map((tag) => morphologyLink(tag));
+  return `[${linked.join(" | ")}]`;
+}
+
+function parseMorphologyTags(morphology: string): string[] {
+  const normalized = morphology
+    .replace(/[\u2010\u2011\u2012\u2013\u2014]/g, "-")
+    .replace(/\s*\|\s*/g, "|")
+    .replace(/\s*,\s*/g, ",")
+    .trim();
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of normalized.split(/[|,]/g)) {
+    const tag = part.trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+function morphologyLink(tag: string): string {
+  const base = normalizePath(`${MORPHOLOGY_ROOT_FOLDER}/${safeFileName(tag)}`);
+  return `[[${base}|${tag}]]`;
+}
+
+function collectMorphologyTags(words: InterlinearWord[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const word of words) {
+    if (!word.morphology) continue;
+    for (const tag of parseMorphologyTags(word.morphology)) {
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  return out;
+}
+
+async function ensureMorphologyNotes(
+  vault: Vault,
+  tags: string[],
+  definitions: Map<string, string>
+): Promise<void> {
+  if (!tags.length) return;
+  await ensureFolderPath(vault, MORPHOLOGY_ROOT_FOLDER);
+
+  const now = new Date().toISOString().slice(0, 10);
+  for (const tag of tags) {
+    const fileName = `${safeFileName(tag)}.md`;
+    const path = normalizePath(`${MORPHOLOGY_ROOT_FOLDER}/${fileName}`);
+    const existing = vault.getAbstractFileByPath(path);
+    const definition = definitions.get(tag);
+    if (existing instanceof TFile) {
+      await upsertMorphologyNote(vault, existing, tag, definition);
+      continue;
+    }
+
+    const yaml = [
+      "---",
+      "type: lexicon/morphology",
+      `tag: ${tag}`,
+      `imported_at: ${now}`,
+      "source: biblehub interlinear",
+      "---",
+      "",
+    ].join("\n");
+
+    const body = [
+      `# ${tag}`,
+      "",
+      "Morphology tag imported from BibleHub interlinear context.",
+      ...(definition ? ["", "## Meaning", "", `- ${definition}`] : []),
+      "",
+    ].join("\n");
+
+    await vault.create(path, yaml + body);
+  }
+}
+
+async function upsertMorphologyNote(
+  vault: Vault,
+  file: TFile,
+  tag: string,
+  definition?: string
+): Promise<void> {
+  if (!definition) return;
+
+  const text = await vault.read(file);
+  if (text.includes(`- ${definition}`)) return;
+
+  const hasMeaning = /^## Meaning\s*$/m.test(text);
+  if (!hasMeaning) {
+    const next = `${text.trimEnd()}\n\n## Meaning\n\n- ${definition}\n`;
+    await vault.modify(file, next);
+    return;
+  }
+
+  const marker = "## Meaning";
+  const idx = text.indexOf(marker);
+  if (idx < 0) return;
+  const insertAt = text.indexOf("\n", idx + marker.length);
+  if (insertAt < 0) return;
+  const next =
+    text.slice(0, insertAt + 1) +
+    `\n- ${definition}` +
+    text.slice(insertAt + 1);
+  await vault.modify(file, next);
+}
+
+function collectMorphologyDefinitions(
+  words: InterlinearWord[]
+): Map<string, string> {
+  const out = new Map<string, string>();
+
+  for (const word of words) {
+    if (!word.morphology || !word.morphologyDetail) continue;
+
+    const tagGroups = splitMorphologyGroups(word.morphology);
+    const detailGroups = splitMorphologyDetailGroups(word.morphologyDetail);
+    for (let i = 0; i < tagGroups.length; i++) {
+      const tags = tagGroups[i];
+      const detail = detailGroups[i] ?? word.morphologyDetail;
+      for (const tag of tags) {
+        if (!out.has(tag)) out.set(tag, detail);
+      }
+    }
+  }
+
+  return out;
+}
+
+function splitMorphologyGroups(morphology: string): string[][] {
+  const normalized = morphology
+    .replace(/[\u2010\u2011\u2012\u2013\u2014]/g, "-")
+    .replace(/\s*\|\s*/g, "|")
+    .replace(/\s*,\s*/g, ",")
+    .trim();
+
+  return normalized
+    .split("|")
+    .map((group) =>
+      group
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)
+    )
+    .filter((group) => group.length > 0);
+}
+
+function splitMorphologyDetailGroups(detail: string): string[] {
+  return detail
+    .split(/\s*::\s*/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
 }
 
 function extractNasbText(html: string): string {
