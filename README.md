@@ -10,16 +10,16 @@ npm install
 npm run build
 
 # copy built artifacts into your vault
-cp manifest.json main.js styles.css /path/to/vault/.obsidian/plugins/obsidian-biblehub-lexicon-importer/
+cp manifest.json main.js styles.css /path/to/vault/.obsidian/plugins/biblehub-lexicon-importer/
 ```
 
 ### Updating after changes
-1) `git pull`
-2) `npm run build`
-3) Copy **manifest.json**, **main.js**, **styles.css** into your vault’s plugin folder
+
+1. `git pull`
+2. `npm run build`
+3. Copy **manifest.json**, **main.js**, **styles.css** into your vault’s plugin folder
 
 > Tip: for development, you can symlink the plugin folder to the repo and use `npm run dev` if you prefer.
-
 
 Import BibleHub Strong's lexicon entries into graph-ready Obsidian notes with typed links, YAML frontmatter, and optional BFS crawling.
 
@@ -30,10 +30,12 @@ Import BibleHub Strong's lexicon entries into graph-ready Obsidian notes with ty
 - Parses lexical fields and basic "See ####" cross-references.
 - Writes notes with consistent YAML and section markers for future updates.
 - BFS crawl of typed edges with depth/node limits.
+- Creates scripture notes with compact interlinear context showing why a verse is linked.
+- Filters scripture links to verses that contain the seed Strong's ID in interlinear data.
 
 ## Installation
 
-1. Copy this folder into your vault at `.obsidian/plugins/obsidian-biblehub-lexicon-importer`.
+1. Copy this folder into your vault at `.obsidian/plugins/biblehub-lexicon-importer`.
 2. In Obsidian: Settings -> Community plugins -> Enable "BibleHub Lexicon Importer".
 
 ## Usage
@@ -69,6 +71,12 @@ Each note includes:
 - YAML frontmatter with Strong's metadata and source URLs.
 - Section markers: `<!-- imported: section_key -->`.
 - Outbound link groups: see also / related / topical.
+
+Scripture notes include:
+
+- NASB verse text.
+- `Why This Verse Is Linked` section with compact matched interlinear words.
+- Links back to lexicon notes using resolved lexicon paths.
 
 ## Development
 

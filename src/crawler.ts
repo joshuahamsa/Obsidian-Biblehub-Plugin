@@ -2,7 +2,9 @@ import type { CrawlResult, Recipe, LexiconEntry, EdgeType } from "./types";
 import { strongsUrl } from "./normalize";
 import { Fetcher } from "./fetcher";
 import { parseEntryFromStrongsPage } from "./parser";
+import { parseInterlinearWords } from "./parser/interlinear";
 import { Writer } from "./writer";
+import type { RelatedStrongLink } from "./scripture";
 import { ensureScriptureNote } from "./scripture";
 import { Vault, TFile, normalizePath } from "obsidian";
 
@@ -75,16 +77,30 @@ export class Crawler {
           recipe.linkTypes.includes("scripture") &&
           entry.links.scripture.length
         ) {
-          const related = Array.from(
-            new Set([entry.strong, ...entry.links.related_strongs])
-          ).map((id) => this.strongLinkForScripture(id, recipe, strongToTitle));
+          const related = this.buildRelatedStrongLinks(
+            entry,
+            recipe,
+            strongToTitle
+          );
           for (const ref of entry.links.scripture) {
+            const interlinearHtml = await this.fetcher.get(
+              ref.interlinearUrl,
+              true
+            );
+            const interlinearWords = parseInterlinearWords(interlinearHtml);
+            const hasSeedStrong = interlinearWords.some(
+              (word) => word.strong === entry.strong
+            );
+            if (!hasSeedStrong) continue;
+
             await ensureScriptureNote(
               this.vault,
               this.fetcher,
               recipe.scriptureRootFolder,
               ref,
-              related
+              related,
+              [entry.strong],
+              interlinearWords
             );
           }
         }
@@ -229,6 +245,21 @@ export class Crawler {
     const folder = recipe.rootFolder.replace(/^\/+|\/+$/g, "");
     const notePath = normalizePath(`${folder}/${title}`);
     return `[[${notePath}|${strong}]]`;
+  }
+
+  private buildRelatedStrongLinks(
+    entry: LexiconEntry,
+    recipe: Recipe,
+    strongToTitle: Map<string, string>
+  ): RelatedStrongLink[] {
+    const relatedIds = Array.from(
+      new Set([entry.strong, ...entry.links.related_strongs])
+    );
+
+    return relatedIds.map((id) => ({
+      id,
+      link: this.strongLinkForScripture(id, recipe, strongToTitle),
+    }));
   }
 }
 

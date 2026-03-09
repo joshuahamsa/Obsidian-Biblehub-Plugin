@@ -437,6 +437,63 @@ function escapeRegExp(s) {
 
 // src/scripture.ts
 var import_obsidian4 = __toModule(require("obsidian"));
+
+// src/parser/interlinear.ts
+function parseInterlinearWords(html) {
+  var _a, _b;
+  const tables = (_a = html.match(/<table class="tablefloat(?:heb)?">[\s\S]*?<\/table>/gi)) != null ? _a : [];
+  const out = [];
+  for (const table of tables) {
+    const strongMatch = table.match(/href="\/(greek|hebrew)\/(\d+)\.htm"/i);
+    if (!strongMatch)
+      continue;
+    const prefix = strongMatch[1].toLowerCase() === "greek" ? "G" : "H";
+    const strong = `${prefix}${parseInt(strongMatch[2], 10)}`;
+    const transliteration = extractSpanText(table, "translit");
+    const original = (_b = extractSpanText(table, "greek")) != null ? _b : extractSpanText(table, "hebrew");
+    const gloss = normalizeGloss(extractSpanText(table, "eng"));
+    const morphology = extractMorphCode(table);
+    out.push({ strong, transliteration, original, gloss, morphology });
+  }
+  return out;
+}
+function extractSpanText(html, className) {
+  const re = new RegExp(`<span class="${className}">([\\s\\S]*?)<\\/span>`, "i");
+  const m = html.match(re);
+  if (!m)
+    return void 0;
+  const text = stripHtml(m[1]);
+  return text || void 0;
+}
+function extractMorphCode(html) {
+  const all = Array.from(html.matchAll(/<span class="(?:strongsnt2|strongsnt)">([\s\S]*?)<\/span>/gi));
+  if (!all.length)
+    return void 0;
+  const last = all[all.length - 1][1];
+  const text = stripHtml(last);
+  return text || void 0;
+}
+function normalizeGloss(gloss) {
+  if (!gloss)
+    return void 0;
+  const clean = gloss.replace(/\s+/g, " ").trim();
+  if (!clean || clean === "-")
+    return void 0;
+  return clean;
+}
+function stripHtml(s) {
+  return decodeHtmlEntities(s.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+}
+function decodeHtmlEntities(text) {
+  return text.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, n) => {
+    const code = parseInt(n, 10);
+    if (Number.isNaN(code))
+      return "";
+    return String.fromCharCode(code);
+  });
+}
+
+// src/scripture.ts
 function slugToBookName(slug) {
   const words = slug.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1));
   return words.join(" ");
@@ -472,7 +529,7 @@ function bookAbbrev(book) {
   }
   return parts[0].slice(0, 3);
 }
-async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStrongLinks) {
+async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStrongs, contextStrongIds, preParsedInterlinearWords) {
   const path = scriptureNotePath(rootFolder, ref);
   const existing = vault.getAbstractFileByPath(path);
   if (existing)
@@ -481,6 +538,7 @@ async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStron
   await ensureFolderPath2(vault, folder);
   const html = await fetcher.get(ref.nasbUrl, true);
   const text = extractNasbText(html) || "";
+  const interlinearWords = preParsedInterlinearWords != null ? preParsedInterlinearWords : parseInterlinearWords(await fetcher.get(ref.interlinearUrl, true));
   const aliases = scriptureAliases(ref).map((a) => `  - "${a}"`);
   const yaml = [
     "---",
@@ -494,23 +552,74 @@ async function ensureScriptureNote(vault, fetcher, rootFolder, ref, relatedStron
     `source_nasb: ${ref.nasbUrl}`,
     `source_interlinear: ${ref.interlinearUrl}`,
     "related_strongs:",
-    ...relatedStrongLinks.map((l) => `  - "${l}"`),
+    ...relatedStrongs.map((r) => `  - "${r.link}"`),
     "---",
     ""
   ].join("\n");
-  const body = [`# ${ref.display}`, "", text.trim(), ""].join("\n");
+  const body = [
+    `# ${ref.display}`,
+    "",
+    text.trim(),
+    "",
+    ...renderInterlinearContext(interlinearWords, relatedStrongs, contextStrongIds),
+    ""
+  ].join("\n");
   console.log("[BibleHub] Creating scripture note:", path);
   new import_obsidian4.Notice(`[BibleHub] Creating scripture note: ${path}`);
   await vault.create(path, yaml + body);
+}
+function renderInterlinearContext(words, relatedStrongs, contextStrongIds) {
+  var _a, _b;
+  const relatedById = new Map(relatedStrongs.map((r) => [r.id, r.link]));
+  const contextSet = new Set(contextStrongIds);
+  const matched = words.filter((w) => contextSet.has(w.strong));
+  if (!words.length) {
+    return [
+      "## Why This Verse Is Linked",
+      "",
+      "Interlinear parsing did not return word-level data for this verse."
+    ];
+  }
+  if (!matched.length) {
+    return [
+      "## Why This Verse Is Linked",
+      "",
+      "No direct seed Strong's match found in the interlinear word list for this verse.",
+      "",
+      "## Interlinear Context",
+      "",
+      "- Loaded interlinear data, but no token matched the seed Strong's ID."
+    ];
+  }
+  const lines = [
+    "## Why This Verse Is Linked",
+    "",
+    `Matched ${matched.length} interlinear token${matched.length === 1 ? "" : "s"}:`,
+    ""
+  ];
+  for (const word of matched.slice(0, 12)) {
+    const strongLink = (_a = relatedById.get(word.strong)) != null ? _a : `[[${word.strong}]]`;
+    const pieces = [
+      (_b = word.original) != null ? _b : "?",
+      word.transliteration ? `(${word.transliteration})` : "",
+      word.gloss ? `- ${word.gloss}` : "",
+      word.morphology ? `[${word.morphology}]` : ""
+    ].filter(Boolean);
+    lines.push(`- ${strongLink}: ${pieces.join(" ")}`);
+  }
+  if (matched.length > 12) {
+    lines.push(`- ...and ${matched.length - 12} more matches.`);
+  }
+  return lines;
 }
 function extractNasbText(html) {
   const re = /NASB 1995<\/a><\/span><br \/>([\s\S]*?)(?:<span class="versiontext">|<span class="p">)/i;
   const m = html.match(re);
   if (!m)
     return "";
-  return stripHtml(m[1]).replace(/\s+/g, " ").trim();
+  return stripHtml2(m[1]).replace(/\s+/g, " ").trim();
 }
-function stripHtml(s) {
+function stripHtml2(s) {
   return s.replace(/<br\s*\/>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
 }
 async function ensureFolderPath2(vault, folder) {
@@ -551,7 +660,14 @@ function parseStrongsPage(strong, url, html) {
   }
   const scripture = extractScriptureRefsFromHtml(html);
   const blocks = {
-    lexical_summary: buildLexicalSummaryBlock({ lemma, transliteration, pronunciation, phonetic, part_of_speech, definition }),
+    lexical_summary: buildLexicalSummaryBlock({
+      lemma,
+      transliteration,
+      pronunciation,
+      phonetic,
+      part_of_speech,
+      definition
+    }),
     strongs_definition: definition ? definition : "",
     helps: extractSectionApprox(text, "HELPS Word-studies", 2e3),
     thayers: extractSectionApprox(text, "Thayer's Greek Lexicon", 3e3),
@@ -602,7 +718,7 @@ function extractStrongRefs(text, lang) {
 }
 function extractScriptureRefsFromHtml(html) {
   const refs = [];
-  const re = /(?:https?:\/\/biblehub\.com)?\/interlinear\/([a-z0-9_]+)\/(\d+)-(\d+)\.htm/gi;
+  const re = /(?:https?:\/\/biblehub\.com)?\/text\/([a-z0-9_]+)\/(\d+)-(\d+)\.htm/gi;
   const seen = new Set();
   let m;
   while (m = re.exec(html)) {
@@ -693,9 +809,14 @@ var Crawler = class {
         else
           res.updated++;
         if (recipe.linkTypes.includes("scripture") && entry.links.scripture.length) {
-          const related = Array.from(new Set([entry.strong, ...entry.links.related_strongs])).map((id) => this.strongLinkForScripture(id, recipe, strongToTitle));
+          const related = this.buildRelatedStrongLinks(entry, recipe, strongToTitle);
           for (const ref of entry.links.scripture) {
-            await ensureScriptureNote(this.vault, this.fetcher, recipe.scriptureRootFolder, ref, related);
+            const interlinearHtml = await this.fetcher.get(ref.interlinearUrl, true);
+            const interlinearWords = parseInterlinearWords(interlinearHtml);
+            const hasSeedStrong = interlinearWords.some((word) => word.strong === entry.strong);
+            if (!hasSeedStrong)
+              continue;
+            await ensureScriptureNote(this.vault, this.fetcher, recipe.scriptureRootFolder, ref, related, [entry.strong], interlinearWords);
           }
         }
         if (depth < recipe.maxDepth) {
@@ -807,6 +928,13 @@ var Crawler = class {
     const folder = recipe.rootFolder.replace(/^\/+|\/+$/g, "");
     const notePath = (0, import_obsidian5.normalizePath)(`${folder}/${title}`);
     return `[[${notePath}|${strong}]]`;
+  }
+  buildRelatedStrongLinks(entry, recipe, strongToTitle) {
+    const relatedIds = Array.from(new Set([entry.strong, ...entry.links.related_strongs]));
+    return relatedIds.map((id) => ({
+      id,
+      link: this.strongLinkForScripture(id, recipe, strongToTitle)
+    }));
   }
 };
 function extractGreekHebrewTokens(text) {

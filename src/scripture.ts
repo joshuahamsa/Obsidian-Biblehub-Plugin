@@ -2,6 +2,10 @@ import { normalizePath, Vault, Notice } from "obsidian";
 import type { ScriptureRef } from "./types";
 import { safeFileName } from "./normalize";
 import { Fetcher } from "./fetcher";
+import type { InterlinearWord } from "./parser/interlinear";
+import { parseInterlinearWords } from "./parser/interlinear";
+
+export type RelatedStrongLink = { id: string; link: string };
 
 export function slugToBookName(slug: string): string {
   const words = slug
@@ -63,7 +67,9 @@ export async function ensureScriptureNote(
   fetcher: Fetcher,
   rootFolder: string,
   ref: ScriptureRef,
-  relatedStrongLinks: string[]
+  relatedStrongs: RelatedStrongLink[],
+  contextStrongIds: string[],
+  preParsedInterlinearWords?: InterlinearWord[]
 ): Promise<void> {
   const path = scriptureNotePath(rootFolder, ref);
   const existing = vault.getAbstractFileByPath(path);
@@ -74,6 +80,9 @@ export async function ensureScriptureNote(
 
   const html = await fetcher.get(ref.nasbUrl, true);
   const text = extractNasbText(html) || "";
+  const interlinearWords =
+    preParsedInterlinearWords ??
+    parseInterlinearWords(await fetcher.get(ref.interlinearUrl, true));
 
   const aliases = scriptureAliases(ref).map((a) => `  - "${a}"`);
 
@@ -89,16 +98,83 @@ export async function ensureScriptureNote(
     `source_nasb: ${ref.nasbUrl}`,
     `source_interlinear: ${ref.interlinearUrl}`,
     "related_strongs:",
-    ...relatedStrongLinks.map((l) => `  - "${l}"`),
+    ...relatedStrongs.map((r) => `  - "${r.link}"`),
     "---",
     "",
   ].join("\n");
 
-  const body = [`# ${ref.display}`, "", text.trim(), ""].join("\n");
+  const body = [
+    `# ${ref.display}`,
+    "",
+    text.trim(),
+    "",
+    ...renderInterlinearContext(
+      interlinearWords,
+      relatedStrongs,
+      contextStrongIds
+    ),
+    "",
+  ].join("\n");
 
   console.log("[BibleHub] Creating scripture note:", path);
   new Notice(`[BibleHub] Creating scripture note: ${path}`);
   await vault.create(path, yaml + body);
+}
+
+function renderInterlinearContext(
+  words: ReturnType<typeof parseInterlinearWords>,
+  relatedStrongs: RelatedStrongLink[],
+  contextStrongIds: string[]
+): string[] {
+  const relatedById = new Map(relatedStrongs.map((r) => [r.id, r.link]));
+  const contextSet = new Set(contextStrongIds);
+  const matched = words.filter((w) => contextSet.has(w.strong));
+
+  if (!words.length) {
+    return [
+      "## Why This Verse Is Linked",
+      "",
+      "Interlinear parsing did not return word-level data for this verse.",
+    ];
+  }
+
+  if (!matched.length) {
+    return [
+      "## Why This Verse Is Linked",
+      "",
+      "No direct seed Strong's match found in the interlinear word list for this verse.",
+      "",
+      "## Interlinear Context",
+      "",
+      "- Loaded interlinear data, but no token matched the seed Strong's ID.",
+    ];
+  }
+
+  const lines: string[] = [
+    "## Why This Verse Is Linked",
+    "",
+    `Matched ${matched.length} interlinear token${
+      matched.length === 1 ? "" : "s"
+    }:`,
+    "",
+  ];
+
+  for (const word of matched.slice(0, 12)) {
+    const strongLink = relatedById.get(word.strong) ?? `[[${word.strong}]]`;
+    const pieces = [
+      word.original ?? "?",
+      word.transliteration ? `(${word.transliteration})` : "",
+      word.gloss ? `- ${word.gloss}` : "",
+      word.morphology ? `[${word.morphology}]` : "",
+    ].filter(Boolean);
+    lines.push(`- ${strongLink}: ${pieces.join(" ")}`);
+  }
+
+  if (matched.length > 12) {
+    lines.push(`- ...and ${matched.length - 12} more matches.`);
+  }
+
+  return lines;
 }
 
 function extractNasbText(html: string): string {

@@ -1,9 +1,13 @@
-import type { LexiconEntry, ScriptureRef } from "../types";
+import type { Lang, LexiconEntry, ScriptureRef } from "../types";
 import { htmlToText, pickLabel } from "./common";
 import { normalizeStrongId, langFromStrong } from "../normalize";
 import { makeScriptureRefFromSlug } from "../scripture";
 
-export function parseStrongsPage(strong: string, url: string, html: string): LexiconEntry {
+export function parseStrongsPage(
+  strong: string,
+  url: string,
+  html: string
+): LexiconEntry {
   const lang = langFromStrong(strong);
   const text = htmlToText(html);
 
@@ -32,12 +36,25 @@ export function parseStrongsPage(strong: string, url: string, html: string): Lex
 
   // Blocks: keep them simple for now
   const blocks: LexiconEntry["blocks"] = {
-    lexical_summary: buildLexicalSummaryBlock({ lemma, transliteration, pronunciation, phonetic, part_of_speech, definition }),
+    lexical_summary: buildLexicalSummaryBlock({
+      lemma,
+      transliteration,
+      pronunciation,
+      phonetic,
+      part_of_speech,
+      definition,
+    }),
     strongs_definition: definition ? definition : "",
     helps: extractSectionApprox(text, "HELPS Word-studies", 2000),
     thayers: extractSectionApprox(text, "Thayer's Greek Lexicon", 3000),
-    forms_transliterations: extractSectionApprox(text, "Forms of", 1200) || extractSectionApprox(text, "Forms & Transliterations", 1200),
-    englishmans_concordance: extractSectionApprox(text, "Englishman's Concordance", 3000),
+    forms_transliterations:
+      extractSectionApprox(text, "Forms of", 1200) ||
+      extractSectionApprox(text, "Forms & Transliterations", 1200),
+    englishmans_concordance: extractSectionApprox(
+      text,
+      "Englishman's Concordance",
+      3000
+    ),
     concordance: extractSectionApprox(text, "Concordance", 2000),
     topical_lexicon: extractSectionApprox(text, "Topical Lexicon", 2000),
   };
@@ -70,16 +87,18 @@ export function parseStrongsPage(strong: string, url: string, html: string): Lex
       see_also: uniq(seeAlso),
       related_strongs: related,
       topical: [],
-      scripture
-    }
+      scripture,
+    },
   };
 }
 
-function extractStrongRefs(text: string, lang: string): string[] {
+function extractStrongRefs(text: string, lang: Lang): string[] {
   if (!text) return [];
   const refs: string[] = [];
   // Match patterns like "STRONGS NT 2222", "Strong's 2222", or plain numbers
-  const matches = Array.from(text.matchAll(/\b(?:STRONGS?\s*(?:NT|OT)?\s*)?([0-9]{1,5})\b/gi));
+  const matches = Array.from(
+    text.matchAll(/\b(?:STRONGS?\s*(?:NT|OT)?\s*)?([0-9]{1,5})\b/gi)
+  );
   for (const m of matches) {
     const id = normalizeStrongId(m[1], lang);
     if (id) refs.push(id);
@@ -89,7 +108,8 @@ function extractStrongRefs(text: string, lang: string): string[] {
 
 function extractScriptureRefsFromHtml(html: string): ScriptureRef[] {
   const refs: ScriptureRef[] = [];
-  const re = /(?:https?:\/\/biblehub\.com)?\/interlinear\/([a-z0-9_]+)\/(\d+)-(\d+)\.htm/gi;
+  const re =
+    /(?:https?:\/\/biblehub\.com)?\/text\/([a-z0-9_]+)\/(\d+)-(\d+)\.htm/gi;
   const seen = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(html))) {
@@ -104,12 +124,13 @@ function extractScriptureRefsFromHtml(html: string): ScriptureRef[] {
   return refs;
 }
 
-
 function uniq(arr: string[]): string[] {
   return Array.from(new Set(arr));
 }
 
-function buildLexicalSummaryBlock(fields: Record<string, string | undefined>): string {
+function buildLexicalSummaryBlock(
+  fields: Record<string, string | undefined>
+): string {
   const lines: string[] = [];
   for (const [k, v] of Object.entries(fields)) {
     if (!v) continue;
@@ -119,9 +140,7 @@ function buildLexicalSummaryBlock(fields: Record<string, string | undefined>): s
 }
 
 function human(k: string): string {
-  return k
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**
@@ -129,7 +148,11 @@ function human(k: string): string {
  * Finds a header line and takes N chars after it.
  * Later you'll replace with DOM-based extraction per section.
  */
-function extractSectionApprox(text: string, header: string, maxChars: number): string {
+function extractSectionApprox(
+  text: string,
+  header: string,
+  maxChars: number
+): string {
   const idx = text.toLowerCase().indexOf(header.toLowerCase());
   if (idx < 0) return "";
   const slice = text.slice(idx, idx + maxChars);
