@@ -1,0 +1,7 @@
+node_modules/
+dist/
+# STEPBible raw files must not be re-hosted (see SPEC §3); fetch with `npm run fetch:data`
+data/raw/
+data/*.sqlite
+data/*.sqlite-*
+.env

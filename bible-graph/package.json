@@ -1,0 +1,24 @@
+{
+  "name": "bible-graph",
+  "version": "0.0.1",
+  "description": "A concordance in the form of a knowledge graph, built for AI-assisted Bible study.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "fetch:data": "tsx scripts/fetch-data.ts",
+    "build:db": "tsx src/ingest/build.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
